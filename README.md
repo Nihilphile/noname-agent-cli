@@ -49,7 +49,7 @@ node bin/noname.cjs play "青龙偃月刀 > 杀[PLAYER]" --at REV --session demo
 node bin/noname.cjs wait --seconds 15 --session demo
 ```
 
-新选择出现时重新观察。操作串遇到需要新决策、阶段变化或无法确认提交时会停止；不会自动重放。机器调用可加 --json。可选的 [noname-play skill](skills/README.md) 提供游玩习惯说明。
+新选择出现时重新观察。操作串遇到需要新决策、阶段变化或无法确认提交时会停止；不会自动重放。机器调用可加 --json。可单独安装并手动调用 [noname-play Skill](skills/README.md)，让 Agent 按玩家视角使用这些命令。
 
 ## 人类与多个 Agent 同机联机
 
