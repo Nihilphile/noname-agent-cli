@@ -71,11 +71,12 @@ test('room defaults apply on first boot without changing source or ordinary sess
     fs.rmSync(root, { recursive: true, force: true });
   });
   for (const roomProfile of [true, false]) {
-    const server = createServer({ source: root, token: 'test', roomProfile }); servers.push(server);
+    const server = createServer({ source: root, token: 'test', roomProfile, contentProfile: roomProfile ? {extensions:['Optional'],characterPacks:['optional_pack'],cardPacks:[]} : {} }); servers.push(server);
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
     const url = `http://127.0.0.1:${server.address().port}/game/config.json`;
     const body = await (await fetch(url)).json();
-    assert.deepEqual(body.extensions, roomProfile ? ['Nihilphile'] : ['restore-user-config']);
+    assert.deepEqual(body.extensions, roomProfile ? ['Optional'] : ['restore-user-config']);
+    if (roomProfile) { assert.deepEqual(body.characters, ['standard', 'optional_pack']); assert.equal(body.extension_Optional_enable, true); }
     assert.equal(body.mode, roomProfile ? 'connect' : 'identity'); assert.equal(body.untouched, 42);
     assert.equal(await (await fetch(url, { method: 'HEAD' })).text(), '');
     assert.equal((await fetch(url, { method: 'POST' })).status, 405);

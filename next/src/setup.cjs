@@ -1,4 +1,5 @@
 'use strict';
+const contentProfiles = require('./content-profile.cjs');
 
 // All configuration is saved in the browser profile owned by this CLI session.
 // Character choices use the game's existing free-choice controls and handlers.
@@ -17,11 +18,7 @@ function validateOptions(options) {
   if (options.character !== undefined && (typeof options.character !== 'string' || !options.character.trim())) {
     throw problem('invalid_character', 'Provide a non-empty character ID; use characters to discover IDs.');
   }
-  const extensions = options.extensions || ['Nihilphile'];
-  if (!Array.isArray(extensions) || extensions.some(x => typeof x !== 'string' || !x || /[\\/]/.test(x))) {
-    throw problem('invalid_extensions', 'Extensions must be an array of installed extension folder names.');
-  }
-  return { mode, character: options.character, extensions };
+  return { mode, character: options.character, ...contentProfiles.resolve(options) };
 }
 
 async function page(cdp, fn, argument) {
@@ -81,8 +78,8 @@ async function prepare(cdp, options = {}) {
     await save('extension_auto_import', false);
     await save('extensions', [...new Set(intent.extensions)]);
     for (const extension of intent.extensions) await save(`extension_${extension}_enable`, true);
-    // Nihilphile registers a character package separately from its extension.
-    if (intent.extensions.includes('Nihilphile')) await save('characters', [...new Set([...(lib.config.characters || []), 'nihilphile'])]);
+    if (intent.characterPacks.length) await save('characters', [...new Set([...(lib.config.characters || []), ...intent.characterPacks])]);
+    if (intent.cardPacks.length) await save('cards', [...new Set([...(lib.config.cards || []), ...intent.cardPacks])]);
     await save('mode', intent.mode);
     await save('show_splash', 'off');
     await save('new_tutorial', true);

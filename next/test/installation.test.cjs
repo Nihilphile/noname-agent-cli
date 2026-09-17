@@ -1,13 +1,23 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const installation=require('../src/installation.cjs');
-function fixture(t){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'noname-install-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const root=path.join(dir,'游戏 目录'),source=path.join(root,'resources/app');fs.mkdirSync(source,{recursive:true});for(const name of ['noname.js','index.html'])fs.writeFileSync(path.join(source,name),'fixture');fs.writeFileSync(path.join(root,'无名杀.exe'),'fixture');return {dir,root,source,file:path.join(dir,'installation.json')};}
+function fixture(t,executableName='无名杀.exe'){const dir=fs.mkdtempSync(path.join(os.tmpdir(),'noname-install-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const root=path.join(dir,'游戏 目录'),source=path.join(root,'resources/app');fs.mkdirSync(source,{recursive:true});for(const name of ['noname.js','index.html'])fs.writeFileSync(path.join(source,name),'fixture');fs.writeFileSync(path.join(root,executableName),'fixture');return {dir,root,source,file:path.join(dir,'installation.json'),executable:path.join(root,executableName)};}
 test('installation accepts a moved game root with spaces and Chinese, persisted for another process',t=>{
   const f=fixture(t),saved=installation.save({source:f.root},f.file);
   assert.equal(saved.source,f.source);assert.equal(saved.executable,path.join(f.root,'无名杀.exe'));
   const {execFileSync}=require('node:child_process');
   const value=JSON.parse(execFileSync(process.execPath,['-e',"console.log(JSON.stringify(require(process.argv[1]).defaults(process.argv[2],{})))",require.resolve('../src/installation.cjs'),f.file],{encoding:'utf8'}));
   assert.equal(value.source,f.source);assert.equal(installation.normalize(f.source),f.source);
+});
+test('installation discovers the official noname executable and keeps explicit override priority',t=>{
+  const f=fixture(t,'noname.exe'),saved=installation.save({source:f.root},f.file);
+  assert.equal(saved.executable,f.executable);
+  const custom=path.join(f.root,'custom.exe');fs.writeFileSync(custom,'fixture');
+  assert.equal(installation.save({source:f.root,executable:custom},f.file).executable,custom);
+});
+test('installation preserves the legacy executable preference when both names exist',t=>{
+  const f=fixture(t,'noname.exe'),legacy=path.join(f.root,'无名杀.exe');fs.writeFileSync(legacy,'fixture');
+  assert.equal(installation.resolveExecutable(f.source),legacy);
 });
 test('invalid replacement leaves the previous installation config intact',t=>{
   const f=fixture(t);installation.save({source:f.root},f.file);const before=fs.readFileSync(f.file,'utf8');

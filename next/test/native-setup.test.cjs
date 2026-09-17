@@ -33,11 +33,11 @@ test('native setup only changes requested mode and free choice; preserves user c
   assert.equal(JSON.stringify({ ...config, mode: undefined, mode_config: undefined }), preserved);
   assert.equal(recorded.length, 3); assert.equal(f.calls[0], 'Page.navigate');
 });
-test('catalog distinguishes human availability from AI prohibition and excludes zus as test candidate', async () => {
+test('catalog distinguishes human availability from AI prohibition without package-specific acceptance flags', async () => {
   const f = mock({ mode: 'identity', mode_config: { identity: {} }, forbidai: ['nihil_yinhua'], banned: [] });
   const result = await characters(f.cdp); const yinhua = result.characters.find(x => x.id === 'nihil_yinhua');
-  assert.equal(yinhua.available, true); assert.equal(yinhua.aiAllowed, false); assert.equal(yinhua.testCandidate, true);
-  assert.equal(result.characters.find(x => x.id === 'zus_test').testCandidate, false);
+  assert.equal(yinhua.available, true); assert.equal(yinhua.aiAllowed, false); assert.equal('testCandidate' in yinhua, false);
+  assert.equal('testCandidate' in result.characters.find(x => x.id === 'zus_test'), false);
 });
 test('unsupported existing double-general mode is explained without changing settings', async () => {
   const f = mock({ mode: 'identity', mode_config: { identity: { double_character: true } } });

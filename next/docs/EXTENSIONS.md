@@ -14,7 +14,7 @@ node bin/noname.cjs room join table --session agent-b
 
 导入先在临时客户端验证，文件内容、持久配置和重载加载均通过后，才发布到本工具的 `next/state/_extensions/`。原游戏的扩展目录和用户 profile 不参与房间导入。
 
-新房间默认包含库内所有已导入扩展以及原有 Nihilphile。房主与客机分别登记、启用相同版本；`room status --json` 的 `extensions` 列出版本 SHA-256。客户端的 HTTP 资源和房主的 Node 文件读取都使用该房间固定的扩展目录，缺少的文件不会回退到原安装的旧版。
+新房间默认包含库内所有已导入扩展，不隐式要求游戏目录中的任何扩展。若还需加载游戏目录已有扩展，在 `room create` 上显式提供 `--extensions`、`--character-packs` 和 `--card-packs`。房主与客机分别登记、启用同一内容配置和导入版本；`room status --json` 的 `contentProfile` 显示游戏目录内容，`extensions` 列出导入版本及 SHA-256。客户端的 HTTP 资源和房主的 Node 文件读取都使用该房间固定的导入扩展目录，缺少的文件不会回退到原安装的旧版。
 
 同名更新需明确加 `--replace`：
 

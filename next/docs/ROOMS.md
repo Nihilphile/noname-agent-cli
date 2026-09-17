@@ -47,10 +47,10 @@ node bin/noname.cjs room close table
 
 ## 配置和限制
 
-- 需要 Node.js 22+、当前无名杀懒人包安装，以及 Edge/Chromium。`--source` 可指定游戏 `resources/app`，但房主目前依赖其上两级的 Windows `无名杀.exe` 安装布局。客机可通过 `--browser` 指定浏览器。
+- 需要 Node.js 22+、无名杀安装，以及 Edge/Chromium。`--source` 可指定游戏 `resources/app`；房主自动识别其上两级的 Windows `无名杀.exe` 或 `noname.exe`。客机可通过 `--browser` 指定浏览器。
 - 房主首次启动会将 Electron 运行文件复制到本工作树 `next/state/_room-runtime/` 缓存，使用自有入口和 profile。游戏源码通过只读 HTTP 提供，不写原安装入口、规则、角色包或用户 profile。
 - HTTP、CDP 和原生 WS 使用独立端口；原生 WS 只监听 `127.0.0.1`。当前不提供局域网其他电脑或公网连接入口。
-- 独立配置启用 Nihilphile、标准武将、标准卡牌、军争卡牌，以及通过 `extension import ZIP --target room` 导入的扩展。每个房间固定创建时的扩展版本，更新只影响新房间；详见 [ZIP 扩展导入](EXTENSIONS.md)。不继承原用户的整套美化/配置恢复扩展。原安装资源仍是外部依赖，不随 CLI 分发。
+- 独立配置默认只启用标准武将、标准卡牌和军争卡牌，不要求 Nihilphile。游戏目录中已有的可选扩展使用 `room create ... --extensions 扩展名 --character-packs 武将包ID --card-packs 卡牌包ID` 显式声明；多个值用逗号分隔。通过 `extension import ZIP --target room` 导入的扩展仍会自动加入新房间。每个房间固定创建时的内容 profile 和导入扩展版本，更新只影响新房间；详见 [ZIP 扩展导入](EXTENSIONS.md)。不继承原用户的整套美化/配置恢复扩展。原安装资源仍是外部依赖，不随 CLI 分发。
 - `--turn-seconds 600` 是原生选择超时参数，默认 600 秒，可设 10–3600；并不暂停整局或保证所有扩展技能都采用同一个时限。
 - `--mode 2v2` 需要房主和三个客机；阵营与座次由原生分配，未实现指定组队。联机视图显示公开的己方/敌方关系，不输出队友手牌。
 - 客机 `play` 支持与单机相同的原始操作、实体手牌封装、`>`、`|` 和 `--wait`。房主为远端选择提供稳定阶段标识，并在真正接纳对应实体牌时向该席位发送回执；`submission.confirmation=host_accepted` 表示提交已被房主接受。额外技能询问、换阶段、断线或回执未确认会停止管道，不重放动作。更新代码前已运行的房间需重建，以安装房主适配器。

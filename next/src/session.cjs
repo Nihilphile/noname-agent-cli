@@ -231,7 +231,7 @@ async function stop(session = 'default') {
     return { session, ok: complete, status: state.status, running: complete ? false : null, cleanupComplete: complete, evidenceDirectory: state.evidenceDirectory, ...(!complete ? { code: 'cleanup_incomplete', message: state.cleanupWarning, cleanupWarning: state.cleanupWarning, resourceState: state.resourceState } : {}) };
   } finally { unlock(); }
 }
-async function start({ session = 'default', source, browser, visible = false, roomHost, room, extensionBundle = [], extensionOnly = false, importRoot, importFiles } = {}) {
+async function start({ session = 'default', source, browser, visible = false, roomHost, room, contentProfile = {}, extensionBundle = [], extensionOnly = false, importRoot, importFiles } = {}) {
   source = installation.source(source);
   const unlock = lock(session); let state;
   const children = {};
@@ -249,7 +249,7 @@ async function start({ session = 'default', source, browser, visible = false, ro
     fs.rmSync(path.join(profile, 'DevToolsActivePort'), { force: true });
     const token = crypto.randomBytes(32).toString('hex');
     const serverOptions = path.join(dir, 'server-options.json');
-    fs.writeFileSync(serverOptions, JSON.stringify({roomProfile:!!room, extensionBundle, extensionOnly, importRoot, importFiles}));
+    fs.writeFileSync(serverOptions, JSON.stringify({roomProfile:!!room, contentProfile, extensionBundle, extensionOnly, importRoot, importFiles}));
     const serverLog = fs.openSync(path.join(dir, 'server.log'), 'a');
     const server = spawn(process.execPath, [path.join(__dirname, 'server.cjs'), prerequisites.source, readyFile, token, serverOptions], { detached: true, windowsHide: true, stdio: ['ignore', serverLog, serverLog] });
     children.server = server;

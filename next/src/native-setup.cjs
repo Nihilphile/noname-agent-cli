@@ -59,7 +59,7 @@ async function characters(cdp, { query = '' } = {}) {
       else if (lib.config.banned?.includes(id)) reason = 'banned_in_current_mode';
       else if (lib.characterFilter?.[id] && !lib.characterFilter[id](get.mode())) reason = 'restricted_in_current_mode';
       else if (character.isMinskin || character.isUnseen || character.isHiddenInStoneMode || ((character.isBoss || character.isHiddenBoss) && !character.isBossAllowed)) reason = 'not_offered_by_free_choice';
-      rows.push({ id, name, packs: packNames, available: !reason, reason, aiAllowed: !lib.config.forbidai?.includes(id), testCandidate: packNames.includes('nihilphile') && !id.startsWith('zus_') });
+      rows.push({ id, name, packs: packNames, available: !reason, reason, aiAllowed: !lib.config.forbidai?.includes(id) });
     }
     return { mode: get.mode(), characters: rows.sort((a, b) => a.id.localeCompare(b.id)), query };
   }, { query });

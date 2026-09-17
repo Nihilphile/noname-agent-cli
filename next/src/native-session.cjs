@@ -122,7 +122,7 @@ function createNativeSession(deps = {}) {
   }
   async function doctor({ source, executable } = {}) {
     const explicitSource=source;
-    source = installation.source(source); executable = path.resolve(executable || (!explicitSource && installation.defaults().executable) || path.join(source, '..', '..', '无名杀.exe'));
+    source = installation.source(source); executable = installation.resolveExecutable(source, executable || (!explicitSource && installation.defaults().executable));
     const missing = [executable, path.join(source, 'noname.js')].filter(p => !fs.existsSync(p));
     const found = matchingProcesses(await listProcesses(), executable);
     return { ok: !missing.length && Number(process.versions.node.split('.')[0]) >= 22, runtime: 'native', source, executable, browser: executable, profile: path.join(source, 'Home', 'UserData'), missing, processes: found.map(p => ({ pid: p.ProcessId, cdpPort: debugPort(p) })), sourceAccess: 'read-only', storage: STATE_ROOT, errors: missing.map(p => `Missing ${p}`) };
@@ -252,4 +252,4 @@ function createNativeSession(deps = {}) {
 }
 module.exports = { ...require('./runtime-monitor.cjs').lifecycle(createNativeSession(), 'native'), createNativeSession, matchingProcesses, debugPort, gamePage, PAGE_HELPER, installNativePageHelper };
 Object.defineProperty(module.exports,'DEFAULT_SOURCE',{enumerable:true,get:()=>installation.defaults().source || ''});
-Object.defineProperty(module.exports,'DEFAULT_EXE',{enumerable:true,get:()=>installation.defaults().executable || (installation.defaults().source ? path.resolve(installation.defaults().source,'../..','无名杀.exe') : '')});
+Object.defineProperty(module.exports,'DEFAULT_EXE',{enumerable:true,get:()=>{const saved=installation.defaults();return saved.executable || (saved.source ? installation.resolveExecutable(saved.source) : '');}});

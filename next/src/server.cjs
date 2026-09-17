@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const {validName, validPath, overlayFile} = require('./extension-files.cjs');
+const contentProfiles = require('./content-profile.cjs');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.ts': 'text/plain; charset=utf-8', '.json': 'application/json', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.ico': 'image/x-icon', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wav': 'audio/wav', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm' };
 const denied = new Set(['home', '.git', '.env', '.ssh', '.codex']);
@@ -25,8 +26,9 @@ function safeFile(root, requestPath) {
   } catch { return candidate; }
 }
 
-function createServer({ source, token, roomProfile = false, extensionBundle = [], extensionOnly = false, importRoot, importFiles = [] }) {
+function createServer({ source, token, roomProfile = false, contentProfile = {}, extensionBundle = [], extensionOnly = false, importRoot, importFiles = [] }) {
   const root = fs.realpathSync(source);
+  const content = contentProfiles.merge(extensionOnly ? {} : contentProfile, contentProfiles.fromExtensionBundle(extensionBundle));
   const resource = requested => {
     const installing = importRoot && fs.existsSync(path.join(importRoot, 'extension')) ? fs.readdirSync(path.join(importRoot, 'extension')).filter(validName).map(name => ({name, root:path.join(importRoot, 'extension', name)})) : [];
     return overlayFile(root, [...installing, ...extensionBundle], requested, safeFile);
@@ -43,11 +45,10 @@ function createServer({ source, token, roomProfile = false, extensionBundle = []
     if ((roomProfile || extensionOnly) && pathname === '/game/config.json' && ['GET', 'HEAD'].includes(req.method)) {
       try {
         const defaults = JSON.parse(fs.readFileSync(path.join(root, 'game/config.json'), 'utf8'));
-        Object.assign(defaults, { extensions: ['Nihilphile'], extension_auto_import: false, extension_Nihilphile_enable: true, new_tutorial: true, show_splash: 'off', mode: 'connect', characters: ['standard', 'nihilphile'], cards: ['standard', 'extra'], directstartmode: null });
-        defaults.extensions = [...new Set([...(extensionOnly ? [] : ['Nihilphile']), ...extensionBundle.map(e => e.name)])];
+        Object.assign(defaults, { extensions: content.extensions, extension_auto_import: false, new_tutorial: true, show_splash: 'off', mode: 'connect', characters: ['standard', ...content.characterPacks], cards: ['standard', 'extra', ...content.cardPacks], directstartmode: null });
         for (const name of defaults.extensions) defaults[`extension_${name}_enable`] = true;
-        defaults.characters = [...new Set(['standard', ...(extensionOnly ? [] : ['nihilphile']), ...extensionBundle.flatMap(e => e.characterPacks || [])])];
-        defaults.cards = [...new Set(['standard', 'extra', ...extensionBundle.flatMap(e => e.cardPacks || [])])];
+        defaults.characters = [...new Set(defaults.characters)];
+        defaults.cards = [...new Set(defaults.cards)];
         res.setHeader('Content-Type', 'application/json; charset=utf-8');
         return res.end(req.method === 'HEAD' ? '' : JSON.stringify(defaults));
       } catch { res.writeHead(500); return res.end('Room default configuration is unavailable.'); }

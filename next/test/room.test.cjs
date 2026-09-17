@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const { createRequire } = require('node:module');
 function fixture({ failHost = false, extensionEntries = [] } = {}) {
   const filename = path.resolve(__dirname, '../src/room.cjs'), real = createRequire(filename);
-  const files = new Map(), states = new Map(), launches = [], stopped = [], locks = new Set();
+  const files = new Map(), states = new Map(), launches = [], prepared = [], stopped = [], locks = new Set();
   const clone = x => x == null ? x : JSON.parse(JSON.stringify(x));
   let playing = false;
   const session = {
@@ -21,7 +21,7 @@ function fixture({ failHost = false, extensionEntries = [] } = {}) {
     async stop(name) { assert.ok(locks.has(name), 'ownership check and cleanup must share the session lock'); stopped.push(name); states.get(name).cleanupComplete = true; return { ok: true }; },
   };
   const setup = {
-    async prepare() {}, async host() { if (failHost) throw Error('host failure'); },
+    async prepare(_cdp, options) { prepared.push(clone(options)); }, async host() { if (failHost) throw Error('host failure'); },
     async join(cdp) { return { onlineID: `id-${cdp.name}` }; },
     async status(cdp) { return { connected: !states.get(cdp.name).cleanupComplete, waiting: !playing, peers: [...states.entries()].filter(([,s]) => !s.cleanupComplete).map(([name,s]) => ({ id: s.room.role === 'host' ? '1' : `id-${name}` })) }; },
     async start() { playing = true; }, async poll() { return { ready: true, playerId: 'host-native-seat' }; },
@@ -40,7 +40,7 @@ function fixture({ failHost = false, extensionEntries = [] } = {}) {
   };
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(filename,'utf8'), { require: requireMock, module, __dirname: path.dirname(filename) }, { filename });
-  return { api: module.exports, states, launches, stopped, setup };
+  return { api: module.exports, states, launches, prepared, stopped, setup };
 }
 test('room lifecycle binds three independent seats and refuses early start and host leave', async () => {
   const f = fixture();
@@ -97,4 +97,13 @@ test('room freezes extension versions for later joiners even after the library c
   await f.api.close('frozen');
   await f.api.create('fresh',{host:'agent'});
   assert.equal(f.launches[2].extensionBundle[0].sha256,'v2');
+});
+test('room has no required source extension and accepts a generic explicit content profile', async () => {
+  const plain = fixture(); await plain.api.create('plain',{host:'agent'});
+  assert.deepEqual(plain.launches[0].contentProfile,{extensions:[],characterPacks:[],cardPacks:[]});
+  assert.deepEqual(plain.prepared[0].extensions,[]);
+  const custom = fixture(); await custom.api.create('custom',{host:'agent',extensions:'Nihilphile', 'character-packs':'nihilphile'});
+  assert.deepEqual(custom.launches[0].contentProfile,{extensions:['Nihilphile'],characterPacks:['nihilphile'],cardPacks:[]});
+  assert.deepEqual(custom.prepared[0].extensions,['Nihilphile']);
+  assert.deepEqual(custom.prepared[0].characterPacks,['nihilphile']);
 });

@@ -15,6 +15,7 @@ const { formatLogs } = require('../src/log-format.cjs');
 const displayConfig = require('../src/display-config.cjs');
 const displayFeedback = require('../src/display-feedback.cjs');
 const { formatExperimental } = require('../src/experimental-format.cjs');
+const contentProfiles = require('../src/content-profile.cjs');
 const HELP = `noname-agent — 外部 Agent 游戏工具
 
 node bin/noname.cjs <command> [options]
@@ -30,6 +31,7 @@ extension watch on|off|status --session NAME [--client native|isolated]
 extension import ... --observe-seconds 3  重载后继续观察延迟错误（0..30秒）
 room create NAME [--mode doudizhu|2v2] [--host human|agent] [--session HOST] [--turn-seconds 600]
                        创建独立本地房间；人类房主默认打开游戏窗口
+                       可选 --extensions 名称列表 --character-packs ID列表 --card-packs ID列表
 room join NAME --session PLAYER [--visible]  独立 Agent 客户端入房
 room start|status|close NAME  开局、查看成员或结束整个房间
 room leave NAME --session PLAYER  客机离开；房主离开需明确 close
@@ -71,6 +73,7 @@ stop                  关闭自己创建的客户端、清理临时配置，保�
 日志覆盖: --log-mode classic|compact|experimental；--raw等同classic
 start/doctor: --source 游戏resources/app绝对路径, --browser 浏览器exe路径
 start: --client native|isolated (默认 native), --port 9222, --attach
+isolated start/restart: 可选 --extensions 名称列表 --character-packs ID列表 --card-packs ID列表
 start: --notify codex-desktop [--notify-thread UUID]；notify on 可用 --desktop-executable PATH
 native 使用原配置；isolated 显式启用旧版隔离环境，--visible 可显示隔离窗口
 详见 README.md。无需 npm install；不调用模型，不代替你作出游戏决策。`;
@@ -78,7 +81,7 @@ native 使用原配置；isolated 显式启用旧版隔离环境，--visible 可
 function parse(argv) {
   const options = {}, positional = [];
   const bools = new Set(['json', 'detail', 'visible', 'unselect', 'help', 'stdin', 'attach', 'raw', 'compact', 'state_hide', 'state_show', 'state_auto', 'wait', 'replace', 'reload']);
-  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'character-packs', 'card-packs', 'observe-seconds']);
+  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'extensions', 'character-packs', 'card-packs', 'observe-seconds']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) positional.push(a);
@@ -259,6 +262,8 @@ async function main(argv, locked = false) {
   const clientKind = isRoom || o.client === 'isolated' ? 'isolated' : 'native';
   const session = clientKind === 'isolated' ? isolatedSession : nativeSession;
   const setup = clientKind === 'isolated' ? isolatedSetup : nativeSetup;
+  const contentFlags = ['extensions', 'character-packs', 'card-packs'].some(key => Object.prototype.hasOwnProperty.call(o, key));
+  if (contentFlags && !(clientKind === 'isolated' && ['start', 'restart'].includes(command))) throw new Error('扩展与包列表只用于 room create，或显式 --client isolated 的 start/restart；native 沿用游戏内配置。');
   if (isRoom && ['start','restart'].includes(command)) throw Error('联机会话使用 room 命令管理；重开房间需先 room close，再 room create。');
   if (isRoom && command === 'stop') {
     const value = await require('../src/room.cjs').leave(roomState.room.id, name);
@@ -329,7 +334,7 @@ async function main(argv, locked = false) {
         const previous = await page.observe(cdp, true);
         await session.appendEvidence(name, { command: 'participation_end', attempt: intent.attempt, output: { mode: previous.mode, character: previous.me?.name, state: previous.state, result: previous.result || { outcome: 'abandoned', finalOutcome: 'unobserved' } } });
       }
-      const target = { mode: o.mode || intent.mode, character: o.character || intent.character };
+      const target = { mode: o.mode || intent.mode, character: o.character || intent.character, ...(clientKind === 'isolated' ? contentProfiles.resolve(o, intent) : {}) };
       if (!target.character || !['identity', 'doudizhu', '2v2'].includes(target.mode)) throw new Error('缺少有效模式/武将；请提供 --mode 和 --character。');
       intent = { ...target, attempt: intent.attempt + 1 };
       fs.writeFileSync(intentFile, JSON.stringify(intent, null, 2));
