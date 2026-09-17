@@ -1,0 +1,17 @@
+{
+  "name": "noname-agent-cli",
+  "version": "1.3.0-experimental.7.1",
+  "private": true,
+  "description": "Player-view external agent CLI for local noname games",
+  "bin": {
+    "noname-agent": "bin/noname.cjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "start": "node bin/noname.cjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "GPL-3.0-only"
+}

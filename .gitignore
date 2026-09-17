@@ -1,0 +1,19 @@
+state/
+state-native/
+.noname-agent-installation.json
+.noname-agent-installation.json.*.tmp
+node_modules/
+.noname-agent.json
+.noname-agent.json.*.tmp
+.env
+.env.local
+
+# Generated archives stay local; checksums and verification reports are tracked.
+/*.zip
+
+# Build outputs are external; ignore accidental local copies as well.
+/release/
+/release-*/
+
+# Generated diagnostic ZIP fixtures are reproducible from research scripts.
+/research/extension-errors-7-20260917/*.zip

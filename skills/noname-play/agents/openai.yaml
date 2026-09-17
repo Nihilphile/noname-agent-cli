@@ -1,0 +1,5 @@
+interface:
+  display_name: "无名杀对局"
+  short_description: "按当前选择操作本机无名杀，按需查技能、等待结算并复盘公开对局"
+policy:
+  allow_implicit_invocation: false

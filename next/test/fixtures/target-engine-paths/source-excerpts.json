@@ -1,0 +1,88 @@
+{
+  "license": "GPL-3.0-only",
+  "origin": "Local noname distribution v1.11.3 source, read-only snapshot on 2026-09-16",
+  "lineEnding": "Excerpt strings normalize CRLF to LF; fileSha256 hashes original bytes.",
+  "excerpts": [
+    {
+      "id": "start",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 196,
+      "to": 211,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "5b8699721102f7eb7360336d83a84864343c97c7b2b356409ec5fcb6318d73b9",
+      "source": "  start() {\n    if (this.#start) {\n      return this.#start;\n    }\n    this.#start = (async () => {\n      if (this.parent) {\n        this.parent.childEvents.push(this);\n      }\n      game.getGlobalHistory(\"everything\").push(this);\n      this.manager.setStatusEvent(this, true);\n      await this.loop().then(() => {\n        this.manager.popStatusEvent();\n      });\n    })();\n    return this.#start;\n  }"
+    },
+    {
+      "id": "loop",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 212,
+      "to": 257,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "96bee1dd2f6038be31f6dd185aeb09e9ea1a69e8e716ba936d38ce5bb0188a1d",
+      "source": "  async loop() {\n    const trigger = async (trigger2, to) => {\n      this._triggered = to;\n      if (this.type == \"card\") {\n        await this.trigger(\"useCardTo\" + trigger2);\n      }\n      await this.trigger(this.name + trigger2);\n    };\n    if (await this.checkSkipped()) {\n      return;\n    }\n    while (true) {\n      await this.waitNext();\n      if (!this.finished) {\n        if (this._triggered === 0) {\n          await trigger(\"Before\", 1);\n        } else if (this._triggered === 1) {\n          await trigger(\"Begin\", 2);\n        } else {\n          this.#inContent = true;\n          let next = this.content(this).catch((error) => {\n            if (lib.config.ignore_error || _status.connectMode && !lib.config.debug) {\n              game.print(\"游戏出错：\" + this.name);\n              game.print(error.toString());\n              console.error(error);\n            } else {\n              throw error;\n            }\n          });\n          await next.finally(() => this.#inContent = false);\n        }\n      } else {\n        if (this._triggered === 1) {\n          await trigger(\"Omitted\", 4);\n        } else if (this._triggered === 2) {\n          await trigger(\"End\", 3);\n        } else if (this._triggered === 3) {\n          await trigger(\"After\", 4);\n        } else if (this.after.length) {\n          this.next.push(this.after.shift());\n        } else {\n          return;\n        }\n      }\n    }\n  }"
+    },
+    {
+      "id": "waitNext",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 271,
+      "to": 299,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "baea9bd1848c636999db3b2eed105674e5cc20b0618cff8f7fdbc7717b0c04af",
+      "source": "  waitNext() {\n    if (this.#waitNext) {\n      return this.#waitNext;\n    }\n    this.#waitNext = (async () => {\n      let result;\n      while (true) {\n        await _status.pauseManager.waitPause();\n        if (this.manager.tempEvent) {\n          if (this.manager.tempEvent === this) {\n            this.manager.tempEvent = void 0;\n          } else {\n            this.cancel(true, null, \"notrigger\");\n            return result;\n          }\n        }\n        if (!this.next.length) {\n          return result;\n        }\n        const next = this.next[0];\n        await next.start();\n        if (next.result) {\n          result = next.result;\n        }\n        this.next.shift();\n      }\n    })().finally(() => this.#waitNext = void 0);\n    return this.#waitNext;\n  }"
+    },
+    {
+      "id": "then",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 75,
+      "to": 77,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "20938efe5a6369021dba12f122229cb19953cd20d4534dbec610236dd7eb2cd9",
+      "source": "  then(onfulfilled, onrejected) {\n    return (this.parent ? this.parent.waitNext().then(() => void 0) : this.start()).then(onfulfilled, onrejected);\n  }"
+    },
+    {
+      "id": "forResult",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 115,
+      "to": 118,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "c75d1167e86f9306b412fde147c021c40bfd758e2780de1de546f58ff6f539e9",
+      "source": "  async forResult() {\n    await this;\n    return this.result;\n  }"
+    },
+    {
+      "id": "step",
+      "file": "noname/library/element/gameEvent.js",
+      "from": 671,
+      "to": 689,
+      "fileSha256": "07bbcd3324efb9300ad190397894be45e2b985f16b2b7ffce87137c597b9bdd6",
+      "sourceSha256": "ee7c6973f75e7cd02677647225cf7cf27495deb3ce8d69bd244524eee5f6236c",
+      "source": "  #step = 0;\n  #nextStep = null;\n  /**\n   * 最后一个子事件的result\n   */\n  _result = {};\n  get step() {\n    return this.#step;\n  }\n  set step(num) {\n    this.#nextStep = num;\n  }\n  updateStep() {\n    if (this.#nextStep === null) {\n      return;\n    }\n    this.#step = this.#nextStep;\n    this.#nextStep = null;\n  }"
+    },
+    {
+      "id": "arrayCompile",
+      "file": "noname/library/element/GameEvent/compilers/ArrayCompiler.js",
+      "from": 7,
+      "to": 33,
+      "fileSha256": "64f68f6caebdac7e9ff4fd49593b0f0b8bd816578d5950e2d08b9358a2565be7",
+      "sourceSha256": "cdd2cff32bc01db72870bbf0432dbddfb08b5b67217cb7cd7b490e946011857c",
+      "source": "  compile(content) {\n    if (!Array.isArray(content)) {\n      throw new ReferenceError(\"content必须是一个数组\");\n    }\n    const compiler = this;\n    return async function(event) {\n      if (!Number.isInteger(event.step)) {\n        event.step = 0;\n      }\n      while (!event.finished) {\n        if (event.step >= content.length) {\n          event.finish();\n          break;\n        }\n        compiler.beforeExecute(event);\n        event.step++;\n        let result;\n        if (!compiler.isPrevented(event)) {\n          const original = content[event.step];\n          result = await Reflect.apply(original, this, [event, event._trigger, event.player, event._result]);\n        }\n        const nextResult = await event.waitNext();\n        event._result = result ?? nextResult ?? event._result;\n        compiler.afterExecute(event);\n      }\n    };\n  }"
+    },
+    {
+      "id": "singleCard",
+      "file": "noname/library/element/player.js",
+      "from": 7181,
+      "to": 7188,
+      "fileSha256": "6c0cb095448a37b95fc1be43b8d7fefed72ae4c4c6803909a374cf9eb6313ab1",
+      "sourceSha256": "9d744d46c94301436399b57f0acd6acbef242422ee8dbda3e0146e7e74ec7f21",
+      "source": "      if (info.singleCard) {\n        next._targets = next.targets.slice(0);\n        next.target = next.targets[0];\n        next.addedTargets = next.targets.splice(1);\n        if (next.addedTargets.length) {\n          next.addedTarget = next.addedTargets[0];\n        }\n      }"
+    },
+    {
+      "id": "jiedao",
+      "file": "card/standard.js",
+      "from": 2998,
+      "to": 3004,
+      "fileSha256": "ad2bb5f4aca5e3882fa9b1454cb30243f4ccf9d3684dfb70412bd400a2697303",
+      "sourceSha256": "fdd072ba667e81420e8b78acedd301ad460e26a34f11f40678c6b903473a8cf5",
+      "source": "\t\t\tjiedao: {\n\t\t\t\taudio: true,\n\t\t\t\tfullskin: true,\n\t\t\t\ttype: \"trick\",\n\t\t\t\tenable: true,\n\t\t\t\tsingleCard: true,\n\t\t\t\ttargetprompt: [\"被借刀\", \"出杀目标\"],"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+state/
+state-native/
+.noname-agent-installation.json
+.noname-agent-installation.json.*.tmp
+.noname-agent.json
+.noname-agent.json.*.tmp
