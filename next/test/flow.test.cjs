@@ -96,6 +96,23 @@ test('local physical card receipts use page IDs, distinguish conversion material
   assert.deepEqual(resolved, [direct, converted]);
 });
 
+test('automatic object selection receipts expose only previously observed physical identities', async () => {
+  const f = fixture(), publicCard = { name: 'zhuge' }, secret = { name: 'secret_hand' };
+  f.api.setKnownCardIdentityResolver(card => card === publicCard ? 'c-public' : null);
+  const use = f.add(new f.GameEvent('useCard', { player: f.self, card: { name: 'guohe' }, targets: [f.other] }));
+  const visible = f.add(new f.GameEvent('discardPlayerCard', { player: f.self, target: f.other, parent: use, result: { bool: true, links: [publicCard] } }));
+  const hidden = f.add(new f.GameEvent('discardPlayerCard', { player: f.self, target: f.other, parent: use, result: { bool: true, links: [secret] } }));
+  const someoneElse = f.add(new f.GameEvent('discardPlayerCard', { player: f.other, target: f.self, parent: use, result: { bool: true, links: [publicCard] } }));
+  assert.equal(f.read().objectChoices.length, 0);
+  await visible.loop(); await hidden.loop(); await someoneElse.loop();
+  const out = f.read();
+  assert.equal(out.objectChoices.length, 2);
+  assert.deepEqual(out.objectChoices.map(r => r.cards), [['c-public'], []]);
+  assert.equal(out.objectChoices[0].sourceAction, out.actions[0].id);
+  assert.equal(out.objectChoices[1].count, 1);
+  assert.doesNotMatch(JSON.stringify(out), /secret_hand/);
+});
+
 test('empty or old finished actions remain partial: unknown does not imply zero', () => {
   const f = fixture();
   f.add(new f.GameEvent('useCard', { finished: true, player: f.self, card: { name: 'sha' } }));
@@ -104,6 +121,30 @@ test('empty or old finished actions remain partial: unknown does not imply zero'
   assert.equal(action.coverage, 'partial');
   assert.equal(action.effectCompleteness.damage, false);
   assert.deepEqual(action.effects, []);
+});
+
+test('a witnessed card loop stays pending while its finished event awaits passive settlement', async () => {
+  const f = fixture();
+  let release, entered;
+  const waiting = new Promise(resolve => { release = resolve; });
+  const started = new Promise(resolve => { entered = resolve; });
+  const use = f.add(new f.GameEvent('useCard', { player: f.self, card: { name: 'jiu' }, targets: [f.self],
+    async run() {
+      // Native finish() ends content before the surrounding loop finishes its
+      // after-events; a passive draw can still be awaiting completion here.
+      this.finished = true;
+      entered();
+      await waiting;
+    },
+  }));
+  const running = use.loop();
+  await started;
+  try {
+    const action = f.read().actions[0];
+    assert.equal(action.status, 'pending', 'unfinished witnessed loop is settlement in progress, not an unknown submission');
+    assert.equal(action.effectCompleteness.draw, false);
+  } finally { release(); await running; }
+  assert.equal(f.read().actions[0].status, 'completed');
 });
 
 test('trigger link preserves source card across polling and exposes only choice ownership', async () => {

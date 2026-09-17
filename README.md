@@ -2,7 +2,7 @@
 
 让外部 Agent 通过命令行参与本机无名杀对局，也支持一个人类与多个 Agent 在同一台电脑联机。工具提供玩家视角观察、操作串、压缩战报、ZIP 扩展导入和局内错误报告；模型由你自己的 Agent 环境提供。
 
-当前版本：**1.3.0-experimental.7.2**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.7.2)。
+当前版本：**1.3.0-experimental.8**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.8)。
 
 ## 安装和第一次开局
 
@@ -64,6 +64,19 @@ node bin/noname.cjs room start table
 
 官方版的 `noname.exe` 已能被自动识别并启动，但本机实测的房间服务器初始化仍停在 `ready=false`；因此本版只确认官方版独立对局可用，不声明官方版本地联机已经兼容。
 
+## 人类游玩与整局复盘
+
+```powershell
+node bin/noname.cjs watch on --session human
+# 人类在窗口中选将并游玩；后台持续保存实验战报
+node bin/noname.cjs logs --all --session human
+node bin/noname.cjs logs games --session human
+node bin/noname.cjs logs --game GAME_ID --round 2 --session human
+node bin/noname.cjs watch off --session human
+```
+
+`watch on` 打开或连接原客户端，由人类正常操作。新建游戏/房间会话也会自动记录。`logs --all` 默认返回实验模式文本，关窗后仍可读；用 `logs games` 获取历史局 ID。旧操作证据中已有的实验事件会自动合并恢复，缺段会明确显示；`--json` 才输出结构化数据。[观战与战报说明](next/docs/SPECTATING.md)。
+
 ## ZIP 扩展与错误报告
 
 ```powershell
@@ -79,7 +92,7 @@ room 导入供之后的新房间使用；native 导入会修改原游戏扩展�
 
 - [操作串](next/docs/PLAY.md)、[操作后等待](next/docs/ACT-WAIT.md)、[场面显示](next/docs/STATE-AUTO.md)
 - [ZIP 导入](next/docs/EXTENSIONS.md)、[扩展错误报告](next/docs/EXTENSION-REPORTS.md)
-- [验证范围与已知限制](next/docs/VALIDATION.md)、[本版更新](next/docs/RELEASE-experimental.7.2.md)
+- [验证范围与已知限制](next/docs/VALIDATION.md)、[本版更新](next/docs/RELEASE-experimental.8.md)
 
 在 next 目录运行 npm test。部分引擎探针需要先配置匹配的游戏；没有安装时会跳过，不能把跳过视为游戏兼容性通过。
 

@@ -155,12 +155,12 @@ test('a card drawn by one wrapper is matched only when the next wrapper begins',
   assert.equal(result.ok, true); assert.deepEqual(result.steps.map(step => step.card.id), ['c1', 'c2']);
 });
 
-test('random choice is fixed and never switches to another matching selectable card', async () => {
+test('random choice draws only from currently selectable matching cards', async () => {
   const a = card('c1', 'shunshou', '顺手牵羊'), b = card('c2', 'shunshou', '顺手牵羊', { selectable: false });
   const state = choice('page:1', [option('c1', 'card', { card: a })], { hand: [a, b] });
-  const h = harness([state]);
+  const h = harness([state, choice('page:2', [], { hand: [b] })], [[], [receipt('r1', 'c1', 'shunshou')]]);
   const result = await run('顺', h, { random: () => 0.75 });
-  assert.equal(result.value, 0); assert.equal(result.steps[0].card.id, 'c2'); assert.equal(result.steps[0].code, 'card_unselectable'); assert.equal(h.requests.length, 0);
+  assert.equal(result.value, 1); assert.equal(result.steps[0].card.id, 'c1'); assert.equal(h.requests.length, 1);
 });
 
 test('ambiguous target rolls back only this wrapper selection before the next pipe group', async () => {
@@ -333,7 +333,7 @@ test('unknown entity receipt and changed effects epoch pause with no automatic r
   assert.equal(second.code, 'session_changed'); assert.equal(changed.requests.length, 1); assert.equal(second.stateFresh, false);
 });
 
-test('existing selections and opponent phase-use responses stop before any wrapper action', async () => {
+test('existing selections stop, while an explicitly bound off-turn card response can start', async () => {
   const sha = card('c1', 'sha', '杀', { selected: true });
   const selected = choice('page:1', [option('c1', 'card', { card: sha, selected: true })], { hand: [sha] });
   const h1 = harness([selected]); const r1 = await run('杀', h1);
@@ -341,7 +341,7 @@ test('existing selections and opponent phase-use responses stop before any wrapp
 
   const response = choice('page:1', [option('c1', 'card', { card: { ...sha, selected: false } })], { hand: [{ ...sha, selected: false }], actor: 'p9', context: { actor: 'p1' } });
   const h2 = harness([response]); const r2 = await run('杀', h2);
-  assert.equal(r2.code, 'unexpected_choice'); assert.equal(h2.requests.length, 0);
+  assert.equal(r2.code, 'selection_required'); assert.equal(h2.requests.length, 1);
 });
 
 test('stale initial revision rejects without mutation and a phase switch stops before the next instruction', async () => {

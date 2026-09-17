@@ -5,6 +5,19 @@ function installPage({ lib, game, ui, get, _status }) {
   if (window.__nonameAgent) return window.__nonameAgent;
   const ids = new WeakMap(), nodes = new Map();
   let serial = 0, revision = 0, signature = '', result = null, acting = false;
+  const pendingChoices = new Map(), choiceReceipts = [];
+  function collectChoiceReceipts() {
+    for (const [key, pending] of pendingChoices) {
+      const r = [pending.event.result, pending.event._result].find(value => value && typeof value.bool === 'boolean' && value !== pending.previousResult && value !== pending.previousInternalResult);
+      if (!r) continue;
+      const chosen = [...(Array.isArray(r.cards) ? r.cards : []), ...(Array.isArray(r.links) ? r.links : [])];
+      const chosenIds = [...new Set(chosen.map(c => pending.visibleCards.get(c)).filter(Boolean))];
+      choiceReceipts.push({ id: key, decisionId: key, event: pending.event.name, accepted: r.bool,
+        cards: chosenIds, sourceAction: pending.sourceAction });
+      pendingChoices.delete(key);
+      if (choiceReceipts.length > 256) choiceReceipts.shift();
+    }
+  }
   // An engine event can return to the same step (chooseToUse.goto(0)). Its
   // object ID and a sampled running state therefore cannot identify a new
   // decision. Native pause/resume change paused synchronously: remember those
@@ -33,6 +46,7 @@ function installPage({ lib, game, ui, get, _status }) {
   // give the local player's already-visible material the same stable ID used by
   // observe().  Flow itself enforces the local-player privacy boundary.
   window.__nonameFlow?.setCardIdentityResolver?.(object => id(object, 'c'));
+  window.__nonameFlow?.setKnownCardIdentityResolver?.(object => ids.get(object) || null);
   const text = value => {
     if (get.plainText) return String(get.plainText(String(value ?? ''))).replace(/\s+/g, ' ').trim();
     const e = document.createElement('div'); e.innerHTML = String(value ?? '');
@@ -72,6 +86,15 @@ function installPage({ lib, game, ui, get, _status }) {
     return { id: name, name: label(name), description: text(description || '说明暂不可获取'), descriptionSource: p===game.me?'player_view':'static_public_rule' };
   };
   const cards = (p, zone) => p?.getCards ? p.getCards(zone) : [];
+  const publicObject = (c, owner) => {
+    const permissions = {};
+    for (const [key, filter] of [['discard', 'canBeDiscarded'], ['gain', 'canBeGained']]) {
+      if (typeof lib.filter?.[filter] === 'function') {
+        try { permissions[key] = !!lib.filter[filter](c, game.me, owner); } catch { permissions[key] = false; }
+      }
+    }
+    return { ...card(c), objectActions: permissions };
+  };
   const isTwo = () => get.mode() === 'versus' && (_status.connectMode
     ? _status.mode === '2v2' && lib.configOL?.versus_mode === '2v2'
     : _status.mode === 'two');
@@ -98,7 +121,7 @@ function installPage({ lib, game, ui, get, _status }) {
   };
   function player(p, detail, { teamHand = false } = {}) {
     const concealed = p.classList?.contains('unseen');
-    const out = { id: id(p, 'p'), name: concealed ? '未知武将' : p.name, label: concealed ? '未知武将' : label(p.name), me: p === game.me, identity: identity(p), ...(team(p) ? { team: team(p) } : {}), hp: p.hp ?? null, maxHp: p.maxHp ?? null, armor: p.hujia ?? 0, dead: !!p.isDead?.(), handCount: p.countCards?.('h') ?? null, equipment: cards(p, 'e').map(c => card(c)), judgments: cards(p, 'j').map(c => card(c)), linked: !!p.isLinked?.(), turnedOver: !!p.isTurnedOver?.() };
+    const out = { id: id(p, 'p'), name: concealed ? '未知武将' : p.name, label: concealed ? '未知武将' : label(p.name), me: p === game.me, identity: identity(p), ...(team(p) ? { team: team(p) } : {}), hp: p.hp ?? null, maxHp: p.maxHp ?? null, armor: p.hujia ?? 0, dead: !!p.isDead?.(), handCount: p.countCards?.('h') ?? null, equipment: cards(p, 'e').map(c => publicObject(c, p)), judgments: cards(p, 'j').map(c => publicObject(c, p)), linked: !!p.isLinked?.(), turnedOver: !!p.isTurnedOver?.() };
     // Native control or viewHandcard permission must explicitly grant access.
     // Team membership alone never widens hand visibility; missing/throwing
     // extension capabilities fail closed before reading any hand contents.
@@ -178,9 +201,14 @@ function installPage({ lib, game, ui, get, _status }) {
       // deliberately renders no face. Never infer the face from that object.
       const face = text(b.innerText);
       const hidden = b.classList.contains('infohidden') || b.querySelector('.infohidden') || (b.classList.contains('card') && !face);
-      add(b, 'button', hidden ? '暗牌' : face || '选项', { visibility: hidden ? 'hidden' : 'known', ...(typeof event.custom?.replace?.button === 'function' ? { interaction: 'custom', selectionCount: (ui.selected?.buttons || []).filter(node => node === b).length } : {}) });
+      const linkedCard = b.link && typeof b.link === 'object' && b.classList.contains('card');
+      add(b, 'button', hidden ? '暗牌' : face || '选项', { visibility: hidden ? 'hidden' : 'known',
+        ...(linkedCard && !hidden ? { card: card(b.link) } : {}),
+        ...(typeof event.custom?.replace?.button === 'function' ? { interaction: 'custom', selectionCount: (ui.selected?.buttons || []).filter(node => node === b).length } : {}) });
     }
-    for (const container of [...new Set([...(ui.controls || []), ui.confirm, ui.skills, ui.skills2, ui.skills3])].filter(visible)) {
+    // Skins may replace registry controls or use display:contents containers.
+    // Visibility is checked on each clickable child, including its ancestors.
+    for (const container of [...new Set([...(ui.controls || []), ui.confirm, ui.skills, ui.skills2, ui.skills3, ...(ui.control?.children || [])])].filter(Boolean)) {
       const isSkill = [ui.skills, ui.skills2, ui.skills3].includes(container);
       for (const n of container.children) add(n, isSkill ? 'skill' : n.link === 'ok' ? 'confirm' : n.link === 'cancel' ? 'cancel' : 'control', text(n.innerText) || label(n.link), isSkill ? { skill: n.link, contextSkillCanonical: canonicalSkill(n.link) } : {});
     }
@@ -190,9 +218,10 @@ function installPage({ lib, game, ui, get, _status }) {
     const scope = window.__nonameRoomPlay?.snapshot?.(event);
     const context = scope?.normal ? { skill: null, actor: id(game.me, 'p'), sourceAction: null, certainty: 'known', transportRequestId: scope.requestId }
       : window.__nonameFlow?.choiceContext(event) || {skill:event.skill||null,certainty:'unknown'};
-    return { id: id(event, 'e'), decisionId: `${window.__nonameAgentEpoch}:${id(event, 'e')}:${pauseGeneration}:${observedGeneration}`, event: event.name, context, prompt: dialogs.map(d => text(d.innerText)).filter(Boolean).join('\n').slice(0, 8000) || text(event.prompt || event.name), skill: event.skill || context.skill || null, constraints: { cards: range('selectCard'), targets: range('selectTarget'), buttons: range('selectButton'), forced: !!event.forced }, options, ...(groups.length ? { groups } : {}) };
+    return { id: id(event, 'e'), decisionId: `${window.__nonameAgentEpoch}:${id(event, 'e')}:${pauseGeneration}:${observedGeneration}`, event: event.name, context, ...(event.target && (game.players || []).includes(event.target) ? { objectOwner: id(event.target, 'p') } : {}), prompt: dialogs.map(d => text(d.innerText)).filter(Boolean).join('\n').slice(0, 8000) || text(event.prompt || event.name), skill: event.skill || context.skill || null, constraints: { cards: range('selectCard'), targets: range('selectTarget'), buttons: range('selectButton'), forced: !!event.forced }, options, ...(groups.length ? { groups } : {}) };
   }
   function observe(detail = false) {
+    collectChoiceReceipts();
     const room = roomConnection();
     if (room && !room.seatMatches) return { state: 'disconnected', room, revision: `${window.__nonameAgentEpoch}:${revision}`, me: null, players: [], choice: null, result: null, recent: [] };
     const ch = choice();
@@ -212,12 +241,17 @@ function installPage({ lib, game, ui, get, _status }) {
     }
     const sig = JSON.stringify([id(_status.event, 'e'), _status.event?.step, phaseId, ch, cards(game.me,'h').map(c=>id(c,'c')), game.me?.hp, !!_status.over, !!game.me?.isDead?.()]);
     if (signature !== sig) { signature = sig; revision++; }
+    // Prose and rebuilt confirm nodes can change revision without changing an
+    // interaction. Selection, constraints, objects and health stay strict.
+    const interaction = ch ? JSON.stringify([window.__nonameAgentEpoch, ch.decisionId, ch.event, ch.context, ch.objectOwner, ch.constraints,
+      ch.options.map(o => [o.kind, o.card?.id || o.player || (['confirm', 'cancel'].includes(o.kind) ? o.kind : o.id), !!o.selected, o.skill, o.label, o.value]),
+      [game.me, ...(game.players || []).filter(p => p !== game.me)].filter(Boolean).map(p => [id(p, 'p'), p.hp, p.hujia, !!p.isDead?.(), cards(p, p === game.me ? 'hej' : 'ej').map(c => id(c, 'c'))])]) : null;
     const all = [...new Set([...(game.players || []), ...(game.dead || [])])];
     const state = room && (!room.connected || !room.seatMatches) ? 'disconnected' : _status.over ? 'over' : game.me?.isDead?.() ? 'dead' : ch ? 'choice' : game.me?.name ? 'running' : 'setup';
     const recent = ui.sidebar ? [...ui.sidebar.children].slice(0, detail ? 50 : 6).map(n => text(n.innerText)).filter(Boolean) : [];
     const log = window.__nonameFlow?.logs();
     const experimentalLog = window.__nonameFlow?.eventLogs?.();
-    return { state, ...(room ? { room, capabilities: { effects: room.role === 'guest' ? 'partial_online' : 'local_events', experimentalLog: room.role === 'guest' ? 'partial_online' : 'local_events' } } : {}), revision: `${window.__nonameAgentEpoch}:${revision}`, mode: get.mode(), submode: _status.mode || null, version: lib.version || null, round: game.roundNumber || 0, phase, phaseId, actor: room?.role === 'guest' && phaseId ? id(game.me, 'p') : _status.currentPhase ? id(_status.currentPhase, 'p') : null, victory: victory(), me: game.me ? { ...player(game.me, detail), hand: cards(game.me, 'h').map(c => card(c)) } : null, players: all.filter(p => p !== game.me).map(p => player(p, detail, { teamHand: true })), choice: ch, result: state === 'over' ? result || { visibility: 'unavailable', message: '未捕获结算，请读取结算界面。' } : state === 'dead' ? { outcome: 'death', finalOutcome: 'unobserved' } : null, recent: log ? log.entries.map(e=>e.text) : recent, ...(log ? {log} : {}), ...(experimentalLog ? {experimentalLog} : {}), ...(detail || state === 'over' ? { visibleDialogs: visibleDialogTexts() } : {}), ...(detail ? { auto: !!_status.auto } : {}) };
+    return { state, interaction, ...(room ? { room, capabilities: { effects: room.role === 'guest' ? 'partial_online' : 'local_events', experimentalLog: room.role === 'guest' ? 'partial_online' : 'local_events' } } : {}), revision: `${window.__nonameAgentEpoch}:${revision}`, mode: get.mode(), submode: _status.mode || null, version: lib.version || null, round: game.roundNumber || 0, phase, phaseId, actor: room?.role === 'guest' && phaseId ? id(game.me, 'p') : _status.currentPhase ? id(_status.currentPhase, 'p') : null, victory: victory(), me: game.me ? { ...player(game.me, detail), hand: cards(game.me, 'h').map(c => card(c)) } : null, players: all.filter(p => p !== game.me).map(p => player(p, detail, { teamHand: true })), choice: ch, result: state === 'over' ? result || { visibility: 'unavailable', message: '未捕获结算，请读取结算界面。' } : state === 'dead' ? { outcome: 'death', finalOutcome: 'unobserved' } : null, recent: log ? log.entries.map(e=>e.text) : recent, ...(log ? {log} : {}), ...(experimentalLog ? {experimentalLog} : {}), ...(detail || state === 'over' ? { visibleDialogs: visibleDialogTexts() } : {}), ...(detail ? { auto: !!_status.auto } : {}) };
   }
   async function act(request) {
     const before = observe();
@@ -226,7 +260,7 @@ function installPage({ lib, game, ui, get, _status }) {
     if (before.room?.auto) return fail('room_auto', '当前由原生 AI 托管，请先在游戏中解除托管。');
     if (before.room?.controller === 'human') return fail('human_controlled', '此席位由人类通过游戏窗口操作。');
     if (acting) return fail('action_pending', '上一操作仍在执行，请等待后 observe。');
-    if (!request.at || request.at !== before.revision) return fail('stale_choice', '选择已变化；使用 observe 返回的新 revision 重试。');
+    if (!request.at || request.at !== before.revision && (!request.interaction || request.interaction !== before.interaction)) return fail('stale_choice', '选择已变化；使用 observe 返回的新 revision 重试。');
     if (!before.choice) return fail('not_choosing', '当前没有等待你处理的选择。');
     let option = before.choice.options.find(o => o.id === request.id);
     if (!option && ['confirm', 'cancel'].includes(request.id)) option = before.choice.options.find(o => o.kind === request.id);
@@ -239,6 +273,19 @@ function installPage({ lib, game, ui, get, _status }) {
       if (request.value == null || !option.values.some(x=>x.value===String(request.value))) return fail('invalid_value', '需要 --value 当前下拉框允许的值。');
       if (String(request.value) === option.value) return fail('already_selected', '该数值已选中，可以确认。');
     } else if (request.value != null) return fail('invalid_value', '--value 仅用于数值下拉框。');
+    const decision = before.choice.decisionId;
+    let pending = pendingChoices.get(decision);
+    if (!pending) {
+      pending = { event: _status.event, previousResult: _status.event.result, previousInternalResult: _status.event._result, sourceAction: before.choice.context?.sourceAction, visibleCards: new Map() };
+      pendingChoices.set(decision, pending);
+      if (pendingChoices.size > 256) pendingChoices.delete(pendingChoices.keys().next().value);
+    }
+    for (const candidate of before.choice.options) {
+      const n = nodes.get(candidate.id);
+      if (candidate.card) pending.visibleCards.set(candidate.kind === 'button' ? n?.link : n, candidate.card.id);
+      // Hidden button identity is safe to acknowledge without exposing its face.
+      else if (candidate.kind === 'button' && n?.link && typeof n.link === 'object') pending.visibleCards.set(n.link, candidate.id);
+    }
     acting = true;
     try {
       if (request.to) {
@@ -284,9 +331,10 @@ function installPage({ lib, game, ui, get, _status }) {
     logs(request) { return window.__nonameFlow?.logs(request)||{entries:[]}; },
     eventLogs(request) { return window.__nonameFlow?.eventLogs?.(request)||{source:'eventflow',coverage:'unavailable',entries:[]}; },
     effects() {
+      collectChoiceReceipts();
       const value = window.__nonameFlow?.effects() || { actions: [] };
       const receipts = window.__nonameRoomPlay?.receipts?.() || [];
-      return receipts.length ? { ...value, actions: [...value.actions, ...receipts] } : value;
+      return { ...value, ...(receipts.length ? { actions: [...value.actions, ...receipts] } : {}), choices: choiceReceipts.slice() };
     },
     commitLogs(request) { const f=window.__nonameFlow; if(f?.commitFeedback) return f.commitFeedback(request); if(f && f.logs().epoch===request.epoch) { f.commitLogs(request.to); return {ok:true}; } return {ok:false,code:'log_epoch_changed'}; },
     rule(name) { return lib.skill[name] ? skill(name, game.me) : lib.card[name] ? { id: name, name: label(name), description: text(lib.translate[name + '_info'] || '') } : { error: 'unknown_rule', id: name }; } };
@@ -318,6 +366,16 @@ const rule = (cdp, name) => cdp.evaluate(expression('rule', name));
 const inspect = (cdp, request) => cdp.evaluate(expression('inspect', request));
 const logs = (cdp, request) => cdp.evaluate(expression('logs', request));
 const eventLogs = (cdp, request) => cdp.evaluate(expression('eventLogs', request));
+// Kept outside installPage so a recorder can attach to an already instrumented
+// game without replacing its API, IDs, result hook, or pending choices.
+function readJournalSnapshot({ game, get, _status }, api, request = {}) {
+  const log = api.eventLogs({ since: 0 });
+  const since = request.epoch === log.epoch && Number.isSafeInteger(request.to) && request.to >= 0 && request.to <= log.to ? request.to : 0;
+  const entries = log.entries.filter(e => e.seq > since);
+  return { log: { ...log, entries, from: entries[0]?.seq ?? log.to + 1, truncated: since < log.from - 1 },
+    meta: { mode: get.mode(), state: _status.over ? 'over' : game.me?.name ? 'running' : 'setup', round: game.roundNumber || 0 } };
+}
+const journalSnapshot = (cdp, request) => cdp.evaluate(`(async()=>{${observationPrelude}const api=(${installPage.toString()})(m);return (${readJournalSnapshot.toString()})(m,api,${JSON.stringify(request)});})()`);
 const effects = cdp => cdp.evaluate(expression('effects'));
 const commitLogs = (cdp, request) => cdp.evaluate(expression('commitLogs', request));
-module.exports = { installPage, expression, observationExpression, installObservation, observe, act, actMany, rule, inspect, logs, eventLogs, effects, commitLogs };
+module.exports = { installPage, expression, observationExpression, installObservation, observe, act, actMany, rule, inspect, logs, eventLogs, readJournalSnapshot, journalSnapshot, effects, commitLogs };

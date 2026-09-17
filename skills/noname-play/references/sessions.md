@@ -1,6 +1,6 @@
 # 会话与内容配置
 
-只在用户要求启动、重开、选择客户端、启用可选内容或创建房间时读取。普通 `observe → play/act → wait` 循环不需要重复加载。
+只在用户要求启动、重开、选择客户端、启用可选内容或创建房间时读取。普通 `observe → play → wait` 循环不需要重复加载。
 
 ## 先确认工具能力
 
@@ -50,4 +50,4 @@ node bin/noname.cjs start --client isolated --session NAME --mode identity --cha
 
 ## 房间
 
-已加入的房间 session 与普通会话使用相同的 `observe/play/act/wait`。只有用户明确要求管理房间时才调用 `room create/join/start/close`，并先读工具目录的 `docs/ROOMS.md`。房间创建失败时保留原错误，执行 `room close NAME` 清理，不改用另一客户端偷偷重试。
+已加入的房间 session 与普通会话使用相同的 `observe/play/wait`。只有用户明确要求管理房间时才调用 `room create/join/start/close`，并先读工具目录的 `docs/ROOMS.md`。房间创建失败时保留原错误，执行 `room close NAME` 清理，不改用另一客户端偷偷重试。

@@ -2,115 +2,10 @@
 
 // A deliberately small finite language.  It never evaluates JavaScript and
 // leaves all legality decisions to the game's current visible choice.
-const MAX_TEXT = 65536;
 const MAX_STEPS = 256;
-const ALIASES = new Map([
-  ['无中', 'wuzhong'],
-  ['顺', 'shunshou'],
-  ['杀', 'sha'],
-  ['诸葛连弩', 'zhuge'],
-]);
-const SUITS = new Map([
-  ['♠', 'spade'], ['黑桃', 'spade'], ['spade', 'spade'],
-  ['♥', 'heart'], ['红桃', 'heart'], ['heart', 'heart'],
-  ['♣', 'club'], ['梅花', 'club'], ['club', 'club'],
-  ['♦', 'diamond'], ['方片', 'diamond'], ['diamond', 'diamond'],
-]);
-const NUMBERS = new Map([['A', 1], ['J', 11], ['Q', 12], ['K', 13]]);
-const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-
-function invalid(message) {
-  const error = new Error(message);
-  error.code = 'invalid_play';
-  return error;
-}
-
-function splitExpression(text) {
-  const tokens = [], operators = [];
-  let start = 0, round = 0, square = 0, face = 0;
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index];
-    if (char === '(') round++;
-    else if (char === ')') { if (!round) throw invalid('操作串括号不匹配。'); round--; }
-    else if (char === '[') square++;
-    else if (char === ']') { if (!square) throw invalid('目标方括号不匹配。'); square--; }
-    else if (char === '【') face++;
-    else if (char === '】') { if (!face) throw invalid('牌面括号不匹配。'); face--; }
-    else if (!round && !square && !face && (char === '>' || char === '|')) {
-      const token = text.slice(start, index).trim();
-      if (!token) throw invalid('连接符两侧都需要操作。');
-      tokens.push(token); operators.push(char); start = index + 1;
-    }
-  }
-  if (round || square || face) throw invalid('操作串括号不匹配。');
-  const last = text.slice(start).trim();
-  if (!last) throw invalid('操作串不能以连接符结束。');
-  tokens.push(last);
-  return { tokens, operators };
-}
-
-function parseRaw(raw) {
-  const match = /^act\(([^)]*)\)(?:\s+(.*))?$/.exec(raw);
-  if (!match) return null;
-  const words = `${match[1]} ${match[2] || ''}`.trim().split(/\s+/).filter(Boolean);
-  const id = words.shift();
-  if (!id || /[()\[\]【】>|]/.test(id)) throw invalid(`原始操作缺少有效 ID：${raw}`);
-  const request = { id };
-  while (words.length) {
-    const flag = words.shift();
-    if (flag === '--unselect') {
-      if (own(request, 'unselect')) throw invalid(`重复参数 --unselect：${raw}`);
-      request.unselect = true;
-    } else if (flag === '--value' || flag === '--to') {
-      const key = flag === '--value' ? 'value' : 'to';
-      if (own(request, key) || !words.length || words[0].startsWith('--')) throw invalid(`${flag} 需要一个值：${raw}`);
-      request[key] = words.shift();
-    } else throw invalid(`不支持的原始操作参数 ${flag}。`);
-  }
-  return { kind: 'act', raw, request };
-}
-
-function parseFace(value, raw) {
-  const input = value.trim();
-  if (!input) return null;
-  let suit = null, rest = input;
-  for (const key of [...SUITS.keys()].sort((a, b) => b.length - a.length)) {
-    if (rest.toLowerCase().startsWith(key.toLowerCase())) {
-      suit = SUITS.get(key); rest = rest.slice(key.length).trim(); break;
-    }
-  }
-  let number = null;
-  if (rest) {
-    const upper = rest.toUpperCase();
-    number = NUMBERS.get(upper) ?? (/^(?:[1-9]|1[0-3])$/.test(rest) ? Number(rest) : null);
-    if (number === null) throw invalid(`牌面点数无效：${raw}`);
-  }
-  if (!suit && number === null) throw invalid(`牌面条件无效：${raw}`);
-  return { ...(suit ? { suit } : {}), ...(number !== null ? { number } : {}) };
-}
-
-function parseCard(raw) {
-  const match = /^([^\[【\]]+?)(?:【([^】]*)】)?(?:\[([^\]]*)\])?$/.exec(raw);
-  if (!match) throw invalid(`无法解析用牌操作：${raw}`);
-  const selector = match[1].trim();
-  if (!selector || /[(){};|>]/.test(selector)) throw invalid(`牌名或实体 ID 无效：${raw}`);
-  const targets = match[3] == null || !match[3].trim() ? [] : match[3].split(/[,，]/).map(value => value.trim());
-  if (targets.some(value => !value || /[\[\]【】(){};|>]/.test(value))) throw invalid(`目标列表无效：${raw}`);
-  return { kind: 'card', raw, selector, name: ALIASES.get(selector) || selector, face: match[2] == null ? null : parseFace(match[2], raw), targets };
-}
-
-function parsePlay(text) {
-  if (typeof text !== 'string' || !text.trim() || text.length > MAX_TEXT) throw invalid('play 需要非空且不超过 64 KiB 的文本。');
-  const { tokens, operators } = splitExpression(text.trim());
-  if (tokens.length > MAX_STEPS) throw invalid(`play 最多包含 ${MAX_STEPS} 项操作。`);
-  const groups = [[]];
-  for (let index = 0; index < tokens.length; index++) {
-    const step = parseRaw(tokens[index]) || parseCard(tokens[index]);
-    groups.at(-1).push(step);
-    if (operators[index] === '|') groups.push([]);
-  }
-  return { kind: 'play-plan', source: text.trim(), groups };
-}
+const { parsePlay, matchesCard, formatCard } = require('./play-language.cjs');
+const { createNames } = require('./experimental-format.cjs');
+const invalid = message => Object.assign(new Error(message), { code: 'invalid_play' });
 
 function validatePlan(plan) {
   if (!plan || plan.kind !== 'play-plan' || !Array.isArray(plan.groups) || !plan.groups.length) throw invalid('需要 parsePlay 返回的计划。');
@@ -118,7 +13,7 @@ function validatePlan(plan) {
   for (const group of plan.groups) {
     if (!Array.isArray(group) || !group.length) throw invalid('每个 | 分组都必须包含操作。');
     for (const step of group) {
-      if (!step || !['act', 'card'].includes(step.kind) || typeof step.raw !== 'string') throw invalid('计划步骤无效。');
+      if (!step || !['act', 'card', 'select', 'end'].includes(step.kind) || typeof step.raw !== 'string') throw invalid('计划步骤无效。');
       if (++count > MAX_STEPS) throw invalid(`play 最多包含 ${MAX_STEPS} 项操作。`);
     }
   }
@@ -135,6 +30,13 @@ function executePlay(input, adapter, options = {}) {
   const intervalMs = options.intervalMs ?? 500;
   const random = options.random ?? Math.random;
   const base = extra => ({ kind: 'play', ok: false, status: 'paused', value: null, steps: output, state, stateFresh: true, remaining: '', ...extra });
+  async function saveProgress() {
+    if (typeof options.onProgress !== 'function') return;
+    const steps = activeRecord && !output.includes(activeRecord) ? [...output, activeRecord] : output;
+    await options.onProgress({ kind: 'play', status: 'paused', value: null, ok: false,
+      steps: JSON.parse(JSON.stringify(steps)), completedSteps: steps.filter(s => s.status === 'completed').length,
+      mustObserve: true, stateFresh: false, remaining: remainingFrom(activeConsumed ? nextCursor(cursor) : cursor) });
+  }
   try { validatePlan(plan); }
   catch (error) { return Promise.resolve(base({ status: 'failed', value: 0, code: 'invalid_play', message: error.message, remaining: plan?.source || '' })); }
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 60000 || !Number.isInteger(intervalMs) || intervalMs < 0 || intervalMs > 5000 || typeof random !== 'function') {
@@ -235,7 +137,7 @@ function executePlay(input, adapter, options = {}) {
     return ['stale_choice', 'action_pending', 'not_choosing', 'choice_changed', 'session_changed', 'result_unknown', 'room_disconnected', 'room_auto', 'human_controlled'].includes(result?.code);
   }
   function cardView(card) {
-    return { id: card.id, cardId: card.id, name: card.name, label: card.label, suit: card.suit, number: card.number };
+    return { id: card.id, cardId: card.id, name: card.name, label: card.label, suit: card.suit, number: card.number, ...(card.nature ? { nature: card.nature } : {}) };
   }
   function markFailure(record, code, message) {
     record.status = 'failed'; record.value = 0; record.code = code; record.message = message;
@@ -245,17 +147,32 @@ function executePlay(input, adapter, options = {}) {
   function targetMatches(name) {
     const people = [state.me, ...(state.players || [])].filter(Boolean);
     const byId = people.filter(player => player.id === name);
-    return byId.length ? byId : people.filter(player => player.name === name || player.label === name);
+    const names = createNames({ players: people });
+    return byId.length ? byId : people.filter(player => player.name === name || player.label === name || names(player) === name);
   }
   function matchingCards(step) {
     const hand = state.me?.hand || [];
-    let matches = hand.filter(card => card.id === step.selector);
-    if (!matches.length) matches = hand.filter(card => card.name === step.name || card.label === step.selector);
-    if (step.face) matches = matches.filter(card => (!step.face.suit || card.suit === step.face.suit) && (step.face.number == null || card.number === step.face.number));
-    return matches;
+    return hand.filter(card => matchesCard(card, step));
+  }
+  function pick(candidates) {
+    const sample = Number(random());
+    if (!Number.isFinite(sample) || sample < 0 || sample >= 1) throw error('invalid_random', 'random 必须返回 [0,1) 内的有限数值。');
+    return candidates[Math.floor(sample * candidates.length)];
+  }
+  async function dispatch(request) {
+    activeConsumed = true; actionCount++; anyMutation = true;
+    if (actionCount > MAX_STEPS) throw error('step_limit', '底层动作超过安全上限。');
+    activeRecord.inFlight = { id: request.id, status: 'not_sent' };
+    await saveProgress();
+    activeRecord.inFlight.status = 'unknown';
+    await saveProgress();
+    const result = await call(() => adapter.act({ ...request, at: state.revision, ...(state.interaction ? { interaction: state.interaction } : {}) }), true);
+    activeRecord.inFlight = { id: request.id, status: result?.ok ? 'accepted' : uncertainActFailure(result) ? 'unknown' : 'rejected' };
+    await saveProgress();
+    return result;
   }
   function findReceipt(card, beforeIds, expectedTargets) {
-    const candidates = (effects?.actions || []).filter(action => !beforeIds.has(action.id) && action.kind === 'card' && action.actor === state.me?.id &&
+    const candidates = (effects?.actions || []).filter(action => !beforeIds.has(action.id) && action.kind === (card.response ? 'respond' : 'card') && action.actor === state.me?.id &&
       action.name === card.name && action.physicalMode === 'direct' && Array.isArray(action.physicalCards) && action.physicalCards.includes(card.id) &&
       (!transportRequestId || action.confirmation === 'host_accepted' && action.requestId === transportRequestId));
     if (candidates.length > 1) throw error('result_unknown', '同一实体牌出现多个新提交动作，无法唯一绑定。');
@@ -269,9 +186,7 @@ function executePlay(input, adapter, options = {}) {
       if (!stillBound()) throw error('unexpected_choice', '撤销前出现未绑定的新选择，已停止。', true);
       const option = state.choice?.options?.find(item => item.id === id);
       if (!option?.selected) continue;
-      activeConsumed = true; actionCount++; anyMutation = true;
-      if (actionCount > MAX_STEPS) throw error('step_limit', '底层动作超过安全上限。');
-      const result = await call(() => adapter.act({ id, at: state.revision, unselect: true }), true);
+      const result = await dispatch({ id, unselect: true });
       if (!result?.ok) {
         if (uncertainActFailure(result)) throw error(result?.code || 'result_unknown', result?.message || '撤销本项选择结果待确认。');
         await settleAfterAct();
@@ -303,10 +218,8 @@ function executePlay(input, adapter, options = {}) {
     }
     const beforeChoice = state.choice, beforeKey = choiceKey(state), beforeContext = beforeChoice.context;
     const beforeActionIds = new Set((effects?.actions || []).map(action => action.id));
-    const request = { ...step.request, id: option.id, at: state.revision };
-    activeConsumed = true; actionCount++; anyMutation = true;
-    if (actionCount > MAX_STEPS) throw error('step_limit', '底层动作超过安全上限。');
-    const result = await call(() => adapter.act(request), true);
+    const request = { ...step.request, id: state.interaction && ['confirm', 'cancel'].includes(option.kind) ? option.kind : option.id };
+    const result = await dispatch(request);
     if (!result?.ok) {
       if (uncertainActFailure(result)) return { type: 'pause', consumed: true, stateFresh: false, code: result?.code || 'result_unknown', message: result?.message || '原始操作结果待确认。', record: activeRecord };
       const code = result?.code || 'action_rejected', message = result?.message || '游戏拒绝原始操作。';
@@ -320,7 +233,8 @@ function executePlay(input, adapter, options = {}) {
     }
     activeRecord.actions.push(result.action || { id: option.id, kind: option.kind, label: option.label });
     activeRecord.status = 'completed'; activeRecord.value = 1;
-    await settleAfterAct(deferCurrentFinal());
+    await saveProgress();
+    await settleAfterAct(deferCurrentFinal() || step.end && nextCursor(cursor) === null);
     const afterKey = choiceKey(state);
     if (afterKey && beforeChoice.decisionId && state.choice.decisionId === beforeChoice.decisionId && afterKey === choiceKey({ choice: beforeChoice })) trustedChoices.add(afterKey);
     const context = state.choice?.context;
@@ -331,36 +245,100 @@ function executePlay(input, adapter, options = {}) {
     if (afterKey && fresh.length === 1 && context?.certainty === 'known' && context.sourceAction === fresh[0].id) trustedChoices.add(afterKey);
     return { type: 'success', consumed: true, record: activeRecord };
   }
+  async function performSelection(step, nested = false) {
+    if (!nested) { activeRecord = { raw: step.raw, status: 'paused', value: null, actions: [] }; activeConsumed = false; }
+    await waitForChoice();
+    const current = state.choice, key = choiceKey(state), decision = current.decisionId;
+    const result = (type, code, message) => ({ type, consumed: activeConsumed, code, message, record: activeRecord });
+    const origin = output.find(s => s.submission?.actionId && s.submission.actionId === current.context?.sourceAction);
+    if (origin && current.context?.skill != null) return result('pause', 'unexpected_choice', '当前是插入的技能询问，不是预写的普通牌选牌。');
+    const continuations = { wugu: ['chooseButton'], guohe: ['discardPlayerCard'], shunshou: ['gainPlayerCard'], huogong: ['chooseCard', 'chooseToDiscard'] };
+    if (origin && current.context?.actor === state.me?.id && current.context?.certainty === 'known' && continuations[origin.card?.name]?.includes(current.event)) trustedChoices.add(key);
+    if (!trustedChoices.has(key) || !decision) return result('pause', 'unexpected_choice', '卡牌对象不属于本串已绑定的询问。');
+    const allowed = step.verb === '弃置' ? ['chooseToDiscard'] : step.verb === '展示' ? ['chooseCard'] : ['chooseButton', 'chooseCard', 'chooseToDiscard', 'choosePlayerCard', 'discardPlayerCard', 'gainPlayerCard'];
+    if (!allowed.includes(current.event) || step.verb === '展示' && current.context?.sourceCard !== 'huogong') return result('pause', 'unexpected_choice', '当前询问不接受这种选牌动作。');
+    const candidates = (current.options || []).filter(o => ['card', 'button'].includes(o.kind) && (o.card || o.visibility === 'hidden'));
+    const fixed = [], used = new Set();
+    for (const spec of step.objects) {
+      const matches = candidates.filter(o => !used.has(o.card?.id || o.id) && matchesCard(o.card || { visibility: o.visibility }, spec));
+      if (!matches.length) return result('pause', 'card_unavailable', '当前询问没有匹配的卡牌对象；已有操作不会重放。');
+      const option = pick(matches), identity = option.card?.id || option.id;
+      fixed.push({ identity, optionId: option.id, card: option.card, spec }); used.add(identity);
+    }
+    if (current.options.some(o => o.selected && !fixed.some(f => f.optionId === o.id))) return result('pause', 'existing_selection', '当前已有未写入本动作的选择。');
+    const range = current.constraints?.[fixed.every(f => candidates.find(o => o.id === f.optionId)?.kind === 'button') ? 'buttons' : 'cards'];
+    if (Array.isArray(range) && (fixed.length < range[0] || range[1] >= 0 && fixed.length > range[1])) return result('pause', 'selection_count', '指定牌数不满足当前询问的数量约束。');
+    const bound = () => choiceKey(state) === key && state.choice?.decisionId === decision;
+    const receipt = () => (effects?.choices || []).find(r => r.decisionId === decision);
+    const validReceipt = r => r?.accepted === true && r.cards.length === fixed.length && fixed.every(f => r.cards.includes(f.identity));
+    activeRecord.selection = fixed.map(f => f.card ? cardView(f.card) : { id: f.identity, visibility: 'hidden' });
+    if (!nested) activeRecord.resolved = step.verb + '<' + fixed.map(f => f.card ? formatCard(f.card) : '暗牌').join(',') + '>';
+    for (const fixedCard of fixed) {
+      if (receipt()) break;
+      if (!bound()) return result('pause', 'unexpected_choice', '选牌中出现新询问，已停止。');
+      if (state.choice.options.some(o => o.selected && !used.has(o.card?.id || o.id))) return result('pause', 'existing_selection', '选牌中出现未授权的额外选择。');
+      const option = state.choice.options.find(o => (o.card?.id || o.id) === fixedCard.identity && ['card', 'button'].includes(o.kind));
+      if (!option || !matchesCard(option.card || { visibility: option.visibility }, fixedCard.spec)) return result('pause', 'card_unavailable', '已固定的卡牌对象不再满足条件。');
+      if (option.selected) continue;
+      const response = await dispatch({ id: option.id });
+      if (!response?.ok) return result('pause', response?.code || 'result_unknown', response?.message || '选牌结果未知。');
+      activeRecord.actions.push(response.action || { id: option.id });
+      await settleAfterAct(deferCurrentFinal());
+    }
+    if (!receipt() && bound()) {
+      const confirm = state.choice.options.find(o => o.kind === 'confirm');
+      if (!confirm) return result('pause', 'confirmation_unavailable', '已选指定牌，但当前没有可用的确认控件。');
+      const response = await dispatch({ id: state.interaction ? 'confirm' : confirm.id });
+      if (!response?.ok) return result('pause', response?.code || 'result_unknown', response?.message || '确认结果未知。');
+      activeRecord.actions.push(response.action || { id: confirm.id });
+      await settleAfterAct(deferCurrentFinal());
+    }
+    while (!receipt() && state.state === 'running') await poll(deferCurrentFinal());
+    if (!validReceipt(receipt())) return result('pause', 'selection_unconfirmed', '未取得指定卡牌的选择提交凭证；请观察核实。');
+    activeRecord.choiceReceipt = receipt().id;
+    if (!nested) { activeRecord.status = 'completed'; activeRecord.value = 1; }
+    return result('success');
+  }
+  async function performEnd(step) {
+    activeRecord = { raw: step.raw, status: 'paused', value: null, actions: [] }; activeConsumed = false;
+    await waitForChoice();
+    if (!normalPhaseChoice() || state.choice.options.some(o => o.selected)) return { type: 'pause', consumed: false, code: 'unexpected_choice', message: '结束出牌需要没有未完成选择的正常出牌阶段。', record: activeRecord };
+    const control = state.choice.options.find(o => o.kind === 'cancel' || o.kind === 'control' && ['结束回合', '结束出牌', '结束出牌阶段'].includes(o.label));
+    if (!control) return { type: 'pause', consumed: false, code: 'option_unavailable', message: '当前没有结束出牌控件。', record: activeRecord };
+    return performRaw({ raw: step.raw, end: true, request: { id: control.kind === 'cancel' ? 'cancel' : control.id } });
+  }
   async function performCard(step) {
     activeRecord = { raw: step.raw, status: 'paused', value: null, actions: [] };
     activeConsumed = false;
     await waitForChoice();
     transportRequestId = state.choice?.context?.transportRequestId || null;
-    if (!normalPhaseChoice()) return { type: 'pause', consumed: false, code: 'unexpected_choice', message: '完整用牌仅能从自己的正常出牌阶段选择开始。', record: activeRecord };
+    const choiceEvent = state.choice?.event;
+    const responseChoice = step.respond ? choiceEvent === 'chooseToRespond' : choiceEvent === 'chooseToUse';
+    if (!normalPhaseChoice() && !(responseChoice && trustedChoices.has(choiceKey(state)))) return { type: 'pause', consumed: false, code: 'unexpected_choice', message: '当前询问不接受这类实体牌使用或打出。', record: activeRecord };
+    if (step.respond && choiceEvent !== 'chooseToRespond') return { type: 'pause', consumed: false, code: 'unexpected_choice', message: '打出仅用于当前要求打出牌的询问。', record: activeRecord };
     if ((state.choice.options || []).some(option => option.selected)) return { type: 'pause', consumed: false, code: 'existing_selection', message: '进入完整用牌前已有未完成选择。', record: activeRecord };
-    const matches = matchingCards(step);
+    const matches = matchingCards(step).filter(card => state.choice.options.some(o => o.kind === 'card' && o.card?.id === card.id));
     if (!matches.length) return { type: 'failure', consumed: true, code: 'card_unavailable', message: '当前自己手牌没有匹配的实体牌。', record: activeRecord };
-    const sample = Number(random());
-    if (!Number.isFinite(sample) || sample < 0 || sample >= 1) throw error('invalid_random', 'random 必须返回 [0,1) 内的有限数值。');
-    const card = matches[Math.floor(sample * matches.length)];
+    const card = { ...pick(matches), ...(step.respond ? { response: true } : {}) };
+    if (step.objectTarget && !['guohe', 'shunshou'].includes(card.name)) return { type: 'failure', consumed: true, code: 'unsupported_object_action', message: '嵌套卡牌对象目前用于过河拆桥和顺手牵羊。', record: activeRecord };
     activeRecord.card = cardView(card);
+    activeRecord.resolved = (step.respond ? '打出' : '') + formatCard(card);
     const option = state.choice.options.find(item => item.kind === 'card' && item.card?.id === card.id);
     if (!option) return { type: 'failure', consumed: true, code: 'card_unselectable', message: '匹配的实体牌当前不可选。', record: activeRecord };
     const phaseId = state.phaseId, decisionId = state.choice.decisionId, boundKey = choiceKey(state);
     if (!decisionId) throw error('result_unknown', '当前选择缺少 decisionId，无法安全绑定完整用牌。');
     const beforeIds = new Set((effects?.actions || []).map(action => action.id));
     const selectedIds = [], expectedTargets = [];
-    const boundChoice = () => choiceKey(state) === boundKey && state.choice?.decisionId === decisionId && state.phaseId === phaseId && state.choice.event === 'chooseToUse';
+    const boundChoice = () => choiceKey(state) === boundKey && state.choice?.decisionId === decisionId && state.phaseId === phaseId && state.choice.event === choiceEvent;
     const requireBoundChoice = () => {
       if (!boundChoice()) throw error('unexpected_choice', '完整用牌过程中出现未绑定的新选择。', true);
     };
     async function actAndSettle(request, selectedId) {
-      activeConsumed = true; actionCount++; anyMutation = true;
-      if (actionCount > MAX_STEPS) throw error('step_limit', '底层动作超过安全上限。');
-      const result = await call(() => adapter.act({ ...request, at: state.revision }), true);
+      const result = await dispatch(request);
       if (!result?.ok) return result;
       recordAction(result.action || { id: request.id });
       if (selectedId) selectedIds.push(selectedId);
+      await saveProgress();
       await settleAfterAct(deferCurrentFinal());
       return result;
     }
@@ -388,7 +366,36 @@ function executePlay(input, adapter, options = {}) {
     if (!receipt && state.phaseId !== phaseId) throw error('result_unknown', '出牌阶段在提交凭证出现前已变化。');
     if (!receipt && state.choice) requireBoundChoice();
 
-    for (const targetName of step.targets) {
+    let targetNames = step.targets.slice(), followup = null;
+    if (!receipt && (step.randomTarget || step.objectTarget)) {
+      requireBoundChoice();
+      const spec = step.objectTarget;
+      if (spec && !['guohe', 'shunshou'].includes(card.name)) throw error('unsupported_object_action', '嵌套卡牌对象目前用于过河拆桥和顺手牵羊。', true);
+      let people = spec?.target ? targetMatches(spec.target) : [state.me, ...(state.players || [])];
+      if (spec?.target && people.length !== 1) throw error(people.length ? 'ambiguous_target' : 'target_unavailable', '指定角色无法唯一匹配。', true);
+      const candidates = [];
+      for (const player of people) {
+        if (!state.choice.options.some(o => o.kind === 'target' && o.player === player.id && !o.selected)) continue;
+        if (!spec) { candidates.push({ player }); continue; }
+        if (spec.objects.length !== 1) throw error('invalid_play', '过拆和顺手每个目标只能预选一张牌。', true);
+        const object = spec.objects[0];
+        if (object.any) { candidates.push({ player, object }); continue; }
+        for (const targetCard of [...(player.equipment || []), ...(player.judgments || []), ...(player.hand || [])]) {
+          if (targetCard.objectActions?.[card.name === 'guohe' ? 'discard' : 'gain'] !== false && matchesCard(targetCard, object)) candidates.push({ player, object: { ...object, face: { ...object.face, id: targetCard.id } }, card: targetCard });
+        }
+      }
+      if (!candidates.length) {
+        const code = 'target_unavailable', message = '没有满足角色与卡牌条件的合法目标。';
+        markFailure(activeRecord, code, message);
+        const submitted = await cleanup(selectedIds, card, beforeIds, expectedTargets, activeRecord, boundChoice);
+        if (submitted) throw error('result_unknown', '清理期间发现用牌已提交。');
+        return { type: 'failure', consumed: true, code, message, record: activeRecord };
+      }
+      const fixed = pick(candidates);
+      targetNames = [fixed.player.id];
+      if (spec) followup = { owner: fixed.player.id, objects: [fixed.object], card: fixed.card };
+    }
+    for (const targetName of targetNames) {
       if (receipt) throw error('result_unknown', '实体牌在全部目标选完前已提交。');
       const people = targetMatches(targetName);
       if (people.length !== 1) {
@@ -410,6 +417,9 @@ function executePlay(input, adapter, options = {}) {
         return { type: 'failure', consumed: true, code, message, record: activeRecord };
       }
       expectedTargets.push(player.id);
+      activeRecord.targets = expectedTargets.slice();
+      const peopleNames = createNames({ players: [state.me, ...(state.players || [])] });
+      activeRecord.resolved = (step.respond ? '打出' : '') + formatCard(card) + '[' + expectedTargets.map(id => peopleNames([state.me, ...state.players].find(p => p.id === id))).join(',') + (followup ? `<${followup.card ? formatCard(followup.card) : '任意'}>` : '') + ']';
       result = await actAndSettle({ id: targetOption.id }, targetOption.id);
       if (!result?.ok) {
         if (uncertainActFailure(result)) return { type: 'pause', consumed: true, stateFresh: false, code: result?.code || 'result_unknown', message: result?.message || '选目标结果待确认。', record: activeRecord };
@@ -430,7 +440,7 @@ function executePlay(input, adapter, options = {}) {
       requireBoundChoice();
       const confirm = state.choice?.options?.find(item => item.kind === 'confirm');
       if (confirm) {
-        result = await actAndSettle({ id: confirm.id });
+        result = await actAndSettle({ id: state.interaction ? 'confirm' : confirm.id });
         if (!result?.ok) {
           if (uncertainActFailure(result)) return { type: 'pause', consumed: true, stateFresh: false, code: result?.code || 'result_unknown', message: result?.message || '确认结果待核实。', record: activeRecord };
           const code = result?.code || 'action_rejected', message = result?.message || '游戏拒绝确认用牌。';
@@ -450,6 +460,31 @@ function executePlay(input, adapter, options = {}) {
     }
     activeRecord.receipt = receipt.id;
     activeRecord.submission = { actionId: receipt.id, targets: Array.isArray(receipt.targets) ? receipt.targets.slice() : [], ...(receipt.confirmation ? { confirmation: receipt.confirmation } : {}) };
+    if (followup) {
+      activeRecord.followup = { status: 'pending', owner: followup.owner };
+      await saveProgress();
+      while (!state.choice && state.state === 'running') await poll();
+      // The native engine may resolve a forced singleton without opening a UI.
+      // Require the same causal action/owner and actual chosen entity, never a
+      // disappearance inferred from the board or a similarly worded log line.
+      const automatic = (effects?.objectChoices || []).find(r => r.sourceAction === receipt.id && r.owner === followup.owner && r.skill == null &&
+        r.event === (card.name === 'guohe' ? 'discardPlayerCard' : 'gainPlayerCard') && r.accepted === true && r.count === 1 &&
+        (followup.objects[0].any || r.cards.includes(followup.objects[0].face?.id)));
+      if (automatic) {
+        activeRecord.followup = { ...activeRecord.followup, status: 'completed', receipt: automatic.id };
+        activeRecord.status = 'completed'; activeRecord.value = 1;
+        return { type: 'success', consumed: true, record: activeRecord };
+      }
+      const context = state.choice?.context;
+      const expectedEvent = card.name === 'guohe' ? 'discardPlayerCard' : 'gainPlayerCard';
+      if (!state.choice || context?.sourceAction !== receipt.id || context.skill != null || state.choice.objectOwner !== followup.owner || state.choice.event !== expectedEvent) {
+        return { type: 'pause', consumed: true, code: 'followup_unavailable', message: '用牌已提交，指定后续选牌尚未完成；请阅读日志和当前询问。', record: activeRecord };
+      }
+      trustedChoices.add(choiceKey(state));
+      const selected = await performSelection({ raw: step.raw, kind: 'select', verb: '选择', objects: followup.objects }, true);
+      if (selected.type !== 'success') return selected;
+      activeRecord.followup.status = 'completed';
+    }
     activeRecord.status = 'completed'; activeRecord.value = 1;
     const key = choiceKey(state), context = state.choice?.context;
     if (key && context?.certainty === 'known' && context.actor === state.me?.id && context.sourceAction === receipt.id) trustedChoices.add(key);
@@ -475,8 +510,9 @@ function executePlay(input, adapter, options = {}) {
             continue;
           }
           activeRecord = null; activeConsumed = false; activeFailure = null;
-          const outcome = step.kind === 'act' ? await performRaw(step) : await performCard(step);
+          const outcome = step.kind === 'act' ? await performRaw(step) : step.kind === 'select' ? await performSelection(step) : step.kind === 'end' ? await performEnd(step) : await performCard(step);
           activeConsumed = outcome.consumed;
+          await saveProgress();
           if (outcome.type === 'success') { output.push(outcome.record); continue; }
           if (outcome.type === 'failure') {
             outcome.record.status = 'failed'; outcome.record.value = 0; outcome.record.code = outcome.code; outcome.record.message = outcome.message;
@@ -491,10 +527,11 @@ function executePlay(input, adapter, options = {}) {
       if (options.deferFinalWait === true) {
         return { kind: 'play', ok: !hadFailure, status: hadFailure ? 'failed' : 'completed', value: hadFailure ? 0 : 1, steps: output, state, stateFresh: true, remaining: '' };
       }
-      while (state?.state === 'running') await poll();
+      const endedPhase = plan.groups.at(-1)?.at(-1)?.kind === 'end';
+      while (state?.state === 'running') await poll(endedPhase);
       if (state?.choice) {
         const cleanNormal = normalPhaseChoice() && !(state.choice.options || []).some(option => option.selected);
-        if (!cleanNormal) return base({ code: 'unexpected_choice', message: '操作串结束后仍有未写明的选择。', remaining: '' });
+        if (!cleanNormal && !endedPhase) return base({ code: 'unexpected_choice', message: '操作串结束后仍有未写明的选择。', remaining: '' });
       }
       return { kind: 'play', ok: !hadFailure, status: hadFailure ? 'failed' : 'completed', value: hadFailure ? 0 : 1, steps: output, state, stateFresh: true, remaining: '' };
     } catch (caught) {

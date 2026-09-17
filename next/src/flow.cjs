@@ -7,7 +7,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
   const LIMIT_LOGS = 2000, LIMIT_ACTIONS = 200, LIMIT_EVENTS = 4000;
   const nodeSeen = new WeakSet(), ids = new WeakMap(), offsets = new WeakMap();
   const seenEvents = new WeakSet(), completed = new WeakSet(), failed = new WeakSet();
-  const witnessedStart = new WeakSet(), incomplete = new WeakSet();
+  const witnessedStart = new WeakSet(), incomplete = new WeakSet(), runningLoops = new WeakSet();
   const errorsMayBeSuppressed = () => !!(lib.config?.ignore_error || _status.connectMode && !lib.config?.debug);
   const armorValues = new WeakMap(), armorApplied = new WeakMap(), dyingApplied = new WeakSet(), deathApplied = new WeakSet(), zoneBefore = new WeakMap(), zoneMoves = new WeakMap();
   const lifeBefore = new WeakMap();
@@ -21,6 +21,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
   // the bridge deliberately one-way and limited to the local player's already
   // known materials so opponent card objects cannot become an ID side channel.
   let cardIdentity = null;
+  let knownCardIdentity = null;
   const journalCall = (method, event) => {
     try { return journal?.[method](event); }
     catch { journalErrors++; return null; }
@@ -218,6 +219,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
   }
   function actionKind(e) {
     if (e.name === 'useCard' && typeof e.card?.name === 'string') return 'card';
+    if (e.name === 'respond' && typeof e.card?.name === 'string') return 'respond';
     if (skillActionName(e)) return 'skill';
     return null;
   }
@@ -272,6 +274,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
     installedLoop = prototype.loop = function (...args) {
       journalCall('begin', this);
       witnessedStart.add(this);
+      runningLoops.add(this);
       addEvent(this);
       if (actionKind(this)) marksBefore.set(this, publicMarks());
       // The native loop can swallow content errors under these settings.
@@ -284,6 +287,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
       const zone = this.name === 'equip' ? 'e' : this.name === 'addJudge' ? 'j' : null;
       if (zone) zoneBefore.set(this, new Set(publicZone(this.player, zone)));
       const onDone = () => {
+        runningLoops.delete(this);
         journalCall('finish', this);
         sampleTransitions(this);
         if (this.finished === true) completed.add(this);
@@ -297,16 +301,16 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
         }
       };
       let value;
-      try { value = original.apply(this, args); } catch (error) { failed.add(this); throw error; }
+      try { value = original.apply(this, args); } catch (error) { runningLoops.delete(this); failed.add(this); throw error; }
       if (value && typeof value.then === 'function') {
         // Return the original promise; attach observation without changing
         // result, error propagation, timing, or event execution ownership.
-        value.then(onDone, () => failed.add(this));
+        value.then(onDone, () => { runningLoops.delete(this); failed.add(this); });
       } else onDone();
       return value;
     };
   }
-  function done(e) { return completed.has(e); }
+  function done(e) { return completed.has(e) && !runningLoops.has(e); }
   function context(e, labels = true) {
     if (labels) refreshSkillGroups();
     const chain = ancestry(e);
@@ -319,7 +323,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
     const skillLabelUnique = labels && !!skill && new Set(Object.keys(lib.skill || {}).map(name => publicSkillName(name)).filter(name => name && clean(lib.translate?.[name] || name) === skillLabel)).size === 1;
     const phase = parent(e);
     const normalPhase = e?.name === 'chooseToUse' && e.type === 'phase' && e.player === game.me && phase?.name === 'phaseUse' && phase.player === game.me && !e.skill && !e._trigger && !e.relatedEvent;
-    return { skill: skill || null, skillLabel, skillLabelUnique, actor: playerId(e?.player || skillEvent?.player || source?.player), sourceAction: source ? id(source, 'fa') : null, certainty: skill || source || normalPhase ? 'known' : 'unknown' };
+    return { skill: skill || null, skillLabel, skillLabelUnique, actor: playerId(e?.player || skillEvent?.player || source?.player), sourceAction: source ? id(source, 'fa') : null, ...(source?.card?.name ? { sourceCard: source.card.name } : {}), certainty: skill || source || normalPhase ? 'known' : 'unknown' };
   }
   function owner(e) {
     const chain = ancestry(e).slice(1);
@@ -362,7 +366,13 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
   function effects() {
     refreshSkillGroups();
     scan();
-    return { epoch, actions: actions.map(e => {
+    const objectChoices = events.filter(e => e.player === game.me && ['discardPlayerCard', 'gainPlayerCard'].includes(e.name) && done(e) && !failed.has(e) && e.result?.bool === true).map(e => {
+      const cards = Array.isArray(e.result.links) ? e.result.links : Array.isArray(e.result.cards) ? e.result.cards : [];
+      const scope = context(e, false);
+      return { id: id(e, 'fc'), event: e.name, accepted: true, owner: playerId(e.target), sourceAction: scope.sourceAction, skill: scope.skill,
+        count: cards.length, cards: typeof knownCardIdentity === 'function' ? cards.map(knownCardIdentity).filter(Boolean) : [] };
+    });
+    return { epoch, objectChoices, actions: actions.map(e => {
       const descendants = events.filter(x => owner(x) === e);
       const complete = done(e) && witnessedStart.has(e) && !errorsMayBeSuppressed() && !incomplete.has(e) && !failed.has(e) && prototype?.loop === installedLoop &&
         descendants.every(x => witnessedStart.has(x) && !failed.has(x) && !incomplete.has(x) && done(x));
@@ -388,7 +398,8 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
         }
       }
       const kind = actionKind(e);
-      const localMaterials = kind === 'card' && e.player === game.me && Array.isArray(e.cards) && typeof cardIdentity === 'function'
+      const isCard = kind === 'card' || kind === 'respond';
+      const localMaterials = isCard && e.player === game.me && Array.isArray(e.cards) && typeof cardIdentity === 'function'
         ? e.cards.map(cardIdentity).filter(cardId => typeof cardId === 'string') : [];
       // Native useCard wraps even an ordinary physical card in a VCard, so
       // object identity between e.card and e.cards[0] is not a direct-use
@@ -399,11 +410,15 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
       const actionNature = nature(e.card?.nature), sameNature = nature(material?.nature) === actionNature;
       const physicalMode = material && !e.skill && material.name === e.card?.name && sameNature ? 'direct' : 'materials';
       return {
-      id: id(e, 'fa'), kind, name: kind === 'card' ? e.card.name : skillActionName(e),
-      ...(kind === 'card' && actionNature ? { nature: actionNature } : {}),
+      id: id(e, 'fa'), kind, name: isCard ? e.card.name : skillActionName(e),
+      ...(isCard && actionNature ? { nature: actionNature } : {}),
       ...(localMaterials.length ? { physicalCards: localMaterials, physicalMode } : {}),
       actor: playerId(e.player), targets: Array.isArray(e.targets) ? e.targets.map(playerId) : [],
-      status: failed.has(e) ? 'unknown' : done(e) ? 'completed' : e.finished === true ? 'unknown' : 'pending',
+      // finish() ends content, not the native loop: End/After triggers and
+      // queued after-events can still be awaiting passive or player settlement.
+      // Only a loop we actually witnessed and still await is known pending;
+      // old finished events and genuine rejected loops must remain unknown.
+      status: failed.has(e) ? 'unknown' : runningLoops.has(e) ? 'pending' : done(e) ? 'completed' : e.finished === true ? 'unknown' : 'pending',
       // Arbitrary custom skills can mutate state outside tracked primitives.
       // Partial is deliberate: an empty effects list never proves no effect.
       coverage: 'partial',
@@ -433,6 +448,7 @@ function installFlow({ lib, game, ui, get, _status }, createJournal) {
   harvestLogs(); scan();
   return window.__nonameFlow = { logs, commitLogs, commitFeedback, effects, eventLogs,
     setCardIdentityResolver(resolve) { cardIdentity = typeof resolve === 'function' ? resolve : null; },
+    setKnownCardIdentityResolver(resolve) { knownCardIdentity = typeof resolve === 'function' ? resolve : null; },
     choiceContext: context, canonicalSkill(name) { refreshSkillGroups(); return publicSkillName(name); }, playerId };
 }
 

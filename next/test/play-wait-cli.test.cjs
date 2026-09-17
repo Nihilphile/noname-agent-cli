@@ -98,7 +98,7 @@ test('play wait uses the real executor under one lock and commits complete indep
   assert.equal(f.commits[0].eventTo, output.state.log.to);
   assert.equal(f.acks.length, 1); assert.equal(f.acks[0].revision, output.state.revision);
   assert.ok(f.events.indexOf('commit') > f.events.indexOf('print'));
-  assert.equal(f.evidence[0].output.state.log.entries.length, 5);
+  assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').output.state.log.entries.length, 5);
 });
 
 test('play wait accepts a completed last step crossing phase and stops at the next choice, death or game over', async () => {

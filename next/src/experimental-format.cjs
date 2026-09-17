@@ -2,11 +2,7 @@
 
 // Render observed facts in their original order. No rule inference or parsing
 // of native prose: a skill is an operation even when no choice was involved.
-const CARDS = Object.freeze({
-  乐不思蜀: '乐', 兵粮寸断: '兵', 顺手牵羊: '顺', 过河拆桥: '拆',
-  无中生有: '无中', 无懈可击: '无懈', 南蛮入侵: '南', 万箭齐发: '万',
-  桃园结义: '桃园', 五谷丰登: '五', 铁索连环: '铁索', 借刀杀人: '借', 决斗: '决',
-});
+const { ABBREVIATIONS: CARDS } = require('./play-language.cjs');
 const PHASES = Object.freeze({
   phaseZhunbei: '准备阶段', phaseJudge: '判定阶段', phaseDraw: '摸牌阶段',
   phaseUse: '出牌阶段', phaseDiscard: '弃牌阶段', phaseJieshu: '结束阶段',
@@ -309,4 +305,4 @@ function formatExperimental(log) {
   return lines.join('\n');
 }
 
-module.exports = { formatExperimental };
+module.exports = { formatExperimental, createNames };

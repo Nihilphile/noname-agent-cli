@@ -7,7 +7,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
 
-function fixture(t, { realPlay = false, roomGuest = false } = {}) {
+function fixture(t, { realPlay = false, roomGuest = false, evidenceFailure = false, formatFailure = false, savedEvidence = '' } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'noname-play-cli-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const filename = path.resolve(__dirname, '../bin/noname.cjs');
@@ -25,8 +25,8 @@ function fixture(t, { realPlay = false, roomGuest = false } = {}) {
     steps: [{ raw: '无中', status: 'completed', value: 1, card: { id: 'c17', label: '无中生有' }, actions: [{ id: 'c17' }] }],
     state, remaining: '' };
   const fakeFs = {
-    existsSync() { return false; },
-    readFileSync(target) { if (target === 0) return stdin; throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
+    existsSync(target) { return !!savedEvidence && String(target).endsWith('evidence.jsonl'); },
+    readFileSync(target) { if (target === 0) return stdin; if (String(target).endsWith('evidence.jsonl')) return savedEvidence; throw Object.assign(Error('missing'), { code: 'ENOENT' }); },
   };
   const page = {
     async observe() { return currentState; },
@@ -39,7 +39,7 @@ function fixture(t, { realPlay = false, roomGuest = false } = {}) {
     sessionDir: () => dir,
     async withLock(_name, work) { locks++; return work(); },
     async connect() { connections++; return { cdp: { close() { closes++; } }, state: { evidenceDirectory: dir, startedAt: 'now' } }; },
-    async appendEvidence(_name, row) { evidence.push(row); },
+    async appendEvidence(_name, row) { if (evidenceFailure) throw Error('disk full'); evidence.push(row); },
   };
   const notifications = {
     beginOperation() { beginOperations++; },
@@ -60,7 +60,7 @@ function fixture(t, { realPlay = false, roomGuest = false } = {}) {
     resolve: value => ({ ...value, raw: false }),
     project: value => value,
   };
-  const displayFeedback = { prepare(_dir, _value, display) { return { options: display, commit() { feedbackCommits++; } }; } };
+  const displayFeedback = { prepare(_dir, _value, display) { if (formatFailure) throw Error('format failed'); return { options: display, commit() { feedbackCommits++; } }; } };
   const requireFixture = name => {
     if (name === 'node:fs') return fakeFs;
     if (['../src/native-session.cjs', '../src/session.cjs'].includes(name)) return session;
@@ -86,8 +86,8 @@ test('play forwards expression, revision, timeout and animation interval under t
   assert.deepEqual(f.parsed, ['无中 > act(confirm)']);
   assert.deepEqual(JSON.parse(JSON.stringify(f.executions[0].options)), { at: 'game:1', timeoutMs: 12000, intervalMs: 750 });
   assert.deepEqual(f.counts(), { locks: 1, connections: 1, closes: 1, beginOperations: 1, feedbackCommits: 1 });
-  assert.equal(f.evidence[0].command, 'play');
-  assert.equal(f.evidence[0].input['interval-ms'], '750');
+  assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').command, 'play');
+  assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').input['interval-ms'], '750');
   assert.equal(f.acknowledgements[0], f.state);
   assert.equal(f.commits.length, 1); assert.equal(f.commits[0].epoch, 'journal'); assert.equal(f.commits[0].to, 9);
   assert.equal(JSON.parse(f.emitted[0]).steps[0].card.id, 'c17');
@@ -128,7 +128,7 @@ test('failed play keeps partial steps, remaining text and final state in JSON ev
   await f.main(['play', '无中 > 杀[fp3] > act(confirm) | 顺[殷华]', '--at', 'game:1', '--json']);
   const rendered = JSON.parse(f.emitted[0]);
   assert.equal(rendered.ok, false); assert.equal(rendered.steps.length, 3); assert.equal(rendered.remaining, partial.remaining);
-  assert.equal(f.evidence[0].output.steps[0].card.id, 'c17'); assert.equal(f.evidence[0].output.remaining, partial.remaining);
+  assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').output.steps[0].card.id, 'c17'); assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').output.remaining, partial.remaining);
   assert.equal(f.processStub.exitCode, 1); assert.equal(f.acknowledgements.length, 1); assert.equal(f.commits.length, 1);
 });
 
@@ -138,7 +138,7 @@ test('uncertain play state does not acknowledge notifications or advance the log
     steps: [{ raw: '杀[fp3]', status: 'paused', value: null, code: 'action_uncertain' }], state: f.state, stateFresh: false, remaining: '杀[fp3]' });
   await f.main(['play', '杀[fp3]', '--at', 'game:1', '--json']);
   assert.equal(f.acknowledgements.length, 0); assert.equal(f.commits.length, 0);
-  assert.equal(f.evidence[0].output.stateFresh, false); assert.equal(JSON.parse(f.emitted[0]).remaining, '杀[fp3]');
+  assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').output.stateFresh, false); assert.equal(JSON.parse(f.emitted[0]).remaining, '杀[fp3]');
 });
 
 test('compact play rendering names 1, 0, skipped, waiting, actual card/actions and remaining work', t => {
@@ -164,7 +164,7 @@ test('CLI runs the real play core across > short-circuit, | continuation and a l
     options: [{ id: 'other', kind: 'button', label: '另一选择' }] } };
   f.setAfterActState(after);
   await f.main(['play', 'act(missing) > act(skipped) | act(ok) > act(later)', '--at', 'game:2', '--interval-ms', '0']);
-  const output = f.evidence[0].output;
+  const output = f.evidence.findLast(row => row.command !== 'play_progress').output;
   assert.equal(output.status, 'paused'); assert.deepEqual(output.steps.map(step => step.status), ['failed', 'skipped', 'completed', 'paused']);
   assert.equal(output.steps[2].actions[0].id, 'ok'); assert.equal(output.remaining, 'act(later)');
   assert.match(f.emitted[0], /1\. 0 act\(missing\)/); assert.match(f.emitted[0], /2\. 跳过 act\(skipped\)/);
@@ -176,5 +176,34 @@ test('legacy act still uses its original request path and lock', async t => {
   await f.main(['act', 'c1', '--at', 'game:1', '--json']);
   assert.equal(f.acts.length, 1); assert.equal(f.acts[0].id, 'c1'); assert.equal(f.acts[0].at, 'game:1');
   assert.equal(f.acts[0].unselect, false); assert.equal(f.acts[0].to, undefined); assert.equal(f.acts[0].value, undefined);
-  assert.equal(f.executions.length, 0); assert.equal(f.counts().locks, 1); assert.equal(f.evidence[0].command, 'act');
+  assert.equal(f.executions.length, 0); assert.equal(f.counts().locks, 1); assert.equal(f.evidence.findLast(row => row.command !== 'play_progress').command, 'act');
+});
+
+test('play keeps its action receipt on stdout when evidence or presentation fails', async t => {
+  for (const flag of ['evidenceFailure', 'formatFailure']) {
+    const f = fixture(t, { [flag]: true });
+    await f.main(['play', '无中', '--at', 'game:2', '--json']);
+    const result = JSON.parse(f.emitted[0]);
+    assert.equal(f.emitted.length, 1); assert.equal(result.completedSteps, 1);
+    assert.equal(result.steps[0].card.id, 'c17'); assert.ok(result.operationId);
+    assert.ok(result.evidenceError || result.feedbackError);
+  }
+});
+
+test('receipt recovery reads a saved progress record without connecting or dispatching', async t => {
+  const progress = { command: 'play_progress', operationId: 'operation-1', output: { kind: 'play', status: 'paused', value: null, steps: [{ raw: '杀[]', status: 'paused', inFlight: { id: 'c1', status: 'unknown' } }], remaining: '结束出牌' } };
+  const f = fixture(t, { savedEvidence: JSON.stringify(progress) + '\n{"interrupted":' });
+  await f.main(['receipt', 'operation-1', '--json']);
+  const result = JSON.parse(f.emitted[0]);
+  assert.equal(result.operationId, 'operation-1'); assert.equal(result.mustObserve, true);
+  assert.equal(result.steps[0].inFlight.status, 'unknown'); assert.equal(result.remaining, '结束出牌');
+  assert.equal(f.counts().connections, 0); assert.equal(f.acts.length, 0);
+});
+
+test('progress evidence retains accepted raw steps before tail observation', async t => {
+  const f = fixture(t, { realPlay: true });
+  await f.main(['play', 'act(ok)', '--at', 'game:2', '--interval-ms', '0', '--json']);
+  assert.ok(f.evidence.some(row => row.command === 'play_progress' && row.output.steps[0]?.inFlight?.status === 'unknown'));
+  assert.ok(f.evidence.some(row => row.command === 'play_progress' && row.output.steps[0]?.status === 'completed'));
+  assert.equal(JSON.parse(f.emitted[0]).completedSteps, 1);
 });

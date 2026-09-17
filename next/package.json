@@ -1,6 +1,6 @@
 {
   "name": "noname-agent-cli",
-  "version": "1.3.0-experimental.7.2",
+  "version": "1.3.0-experimental.8",
   "private": true,
   "description": "Player-view external agent CLI for local noname games",
   "bin": {

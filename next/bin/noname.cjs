@@ -2,6 +2,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const nativeSession = require('../src/native-session.cjs');
 const isolatedSession = require('../src/session.cjs');
 const nativeSetup = require('../src/native-setup.cjs');
@@ -39,6 +40,7 @@ start --mode identity|doudizhu|2v2 --character ID   启动原客户端（可见�
 characters [QUERY]     查询当前环境武将（须先 start）
 character ID           单独查看精确武将ID的公开基础资料和原生技能说明
 observe [--detail]     当前选择、自己手牌、公开局面；detail含技能/标记
+receipt [ID]          本地读取最近或指定 play 收据，连接中断后也可查
 act OPTION --at REV [--unselect]  点击当前选择中的id（或confirm/cancel）
 act BUTTON --to GROUP_OR_BUTTON --at REV  移动牌/交换位置
 act NUMBER --value VALUE --at REV  设置数量下拉框
@@ -50,10 +52,16 @@ notify on [--detail] [--thread UUID]  订阅新决策；默认简短通知，det
 notify off|status      停止通知或检查后台与投递状态
 inspect PLAYER skills  查看指定角色当前公开技能和标记
 logs [--from N]         查看所选日志模式的战报（不消耗 act 增量）
+watch on|off|status    后台记录人类游玩的实验战报；on 可打开原客户端，自行选将开局
+logs --all            查看最近一局已归档的实验战报，关窗后仍可读
+logs games            列出本会话历史对局；--game ID 读指定局
+logs --game ID [--round N] [--from N --to N]   按轮次或事件序号筛选
 effects [--limit 10]   最近用牌/技能的已观测结算效果
 act "a > b > 技能ID:cancel" --at REV  有归属检查的串联
 act --stdin --at REV   从标准输入读取组合字符串或 JSON 有限条件计划
 play "CARD[TARGET] > act(ID) | CARD" --at REV   执行有限混合操作串
+                      杀【♥12】[角色]、杀【id:c123】[]、拆[角色<诸葛连弩>]
+                      选择<桃>、弃置<闪,杀>、展示<闪>、打出杀、结束出牌、confirm/cancel
 play --stdin --at REV [--seconds 30] [--interval-ms 500]
                       整串限时1..60秒；每次底层动作间隔0..5000毫秒
 play ... --at REV --wait [--wait-seconds 15]  整串成功后另等选择/死亡/结局，等待1..60秒
@@ -80,8 +88,8 @@ native 使用原配置；isolated 显式启用旧版隔离环境，--visible 可
 
 function parse(argv) {
   const options = {}, positional = [];
-  const bools = new Set(['json', 'detail', 'visible', 'unselect', 'help', 'stdin', 'attach', 'raw', 'compact', 'state_hide', 'state_show', 'state_auto', 'wait', 'replace', 'reload']);
-  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'extensions', 'character-packs', 'card-packs', 'observe-seconds']);
+  const bools = new Set(['json', 'detail', 'visible', 'unselect', 'help', 'stdin', 'attach', 'raw', 'compact', 'state_hide', 'state_show', 'state_auto', 'wait', 'replace', 'reload', 'all']);
+  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'extensions', 'character-packs', 'card-packs', 'observe-seconds', 'game', 'round']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) positional.push(a);
@@ -133,6 +141,8 @@ function formatState(s, options = {}) {
 }
 function render(value, json, options = {}) {
   if (json) return JSON.stringify(displayConfig.project(value, options), null, 2);
+  if (['game-log', 'game-list'].includes(value?.kind)) return require('../src/game-log-store.cjs').format(value);
+  if (value?.kind === 'watch') return require('../src/game-log-recorder.cjs').format(value);
   if (value?.wait && typeof value.wait === 'object') {
     const { wait, ...rest } = value;
     const completedAction = value.ok === false && value.actionOutcome === 'completed' && value.action ? `已执行 ${value.action.label}\n` : '';
@@ -143,6 +153,7 @@ function render(value, json, options = {}) {
     const paused = item => item.code === 'timeout' ? '超时' : uncertain(item.code) ? '未知' : '等待';
     const mark = step => step.value === 1 ? '1' : step.value === 0 ? '0' : step.status === 'skipped' ? '跳过' : step.status === 'paused' ? paused(step) : '未知';
     const detail = step => {
+      if (step.resolved) return ` | ${step.resolved}${step.submission ? '；用牌已提交' : ''}${step.followup ? '；后续选牌' + (step.followup.status === 'completed' ? '已完成' : '未完成') : ''}${step.code ? '；' + [step.code, step.message].filter(Boolean).join(': ') : ''}`;
       const card = typeof step.card === 'string' ? step.card : step.card && (step.card.id || step.card.cardId || step.card.label || step.card.name);
       const actions = (step.actions || []).map(action => typeof action === 'string' ? action : action.id || action.label || action.action?.id || action.action?.label).filter(Boolean);
       const facts = [...(card ? [`牌 ${card}`] : []), ...(actions.length ? [`动作 ${actions.join(' → ')}`] : [])];
@@ -151,6 +162,7 @@ function render(value, json, options = {}) {
     };
     const result = value.value === 1 ? '1' : value.value === 0 ? '0' : value.status === 'paused' ? paused(value) : '未知';
     const lines = [`play ${result}${value.code || value.message ? ' | '+[value.code,value.message].filter(Boolean).join(': ') : ''}`];
+    if (value.operationId) lines.push('收据 ' + value.operationId);
     for (const [index, step] of (value.steps || []).entries()) lines.push(`${index + 1}. ${mark(step)} ${step.raw || ''}${detail(step)}`.trimEnd());
     if (value.remaining != null && (Array.isArray(value.remaining) ? value.remaining.length : String(value.remaining).length)) lines.push('剩余 ' + (Array.isArray(value.remaining) ? value.remaining.join(' | ') : value.remaining));
     if (value.state) lines.push(formatState(value.state, options));
@@ -190,6 +202,7 @@ function integer(value, fallback, min, max) {
 async function main(argv, locked = false) {
   const { command, args, options: o } = parse(argv);
   if (command === 'help' || o.help) { console.log(HELP); return; }
+  if ((o.all || o.game != null || o.round != null) && command !== 'logs') throw Error('--all、--game、--round 只用于 logs。');
   if(command==='setup'){
     if(args.length)throw Error('setup --source 游戏安装目录 [--executable EXE] [--browser EXE]');
     const value=require('../src/installation.cjs').save(o);
@@ -270,13 +283,60 @@ async function main(argv, locked = false) {
     console.log(o.json ? JSON.stringify(value) : formatRoom(value)); return;
   }
   if (o.mode === '2v2' && o.client === 'isolated') throw new Error('2v2 使用原客户端；请使用默认 native。');
-  if (!locked && ['start', 'restart', 'act', 'play', 'stop', 'notify'].includes(command) && !(command === 'notify' && args.length === 1 && args[0] === 'status')) return session.withLock(name, () => main(argv, true));
+  if (!locked && ['start', 'restart', 'act', 'play', 'stop', 'notify', 'watch'].includes(command) && !(['notify', 'watch'].includes(command) && args.length === 1 && args[0] === 'status')) return session.withLock(name, () => main(argv, true));
+  let emitted = false;
   const emit = value => {
-    const feedback = displayFeedback.prepare(session.sessionDir?.(name), value, display, { json: !!o.json });
-    console.log(render(value, o.json, feedback.options) + (!o.json && value?.notification ? '\n'+notificationText(value.notification) : '') + (!o.json && value?.errorMonitor ? '\n错误监听 '+value.errorMonitor.status+(value.errorMonitor.error?'：'+value.errorMonitor.error:'') : ''));
-    feedback.commit();
+    let feedback, rendered;
+    try {
+      feedback = displayFeedback.prepare(session.sessionDir?.(name), value, display, { json: !!o.json });
+      rendered = render(value, o.json, feedback.options) + (!o.json && value?.notification ? '\n'+notificationText(value.notification) : '') + (!o.json && value?.errorMonitor ? '\n错误监听 '+value.errorMonitor.status+(value.errorMonitor.error?'：'+value.errorMonitor.error:'') : '') + (!o.json && value?.gameLogRecorder ? '\n观战记录 '+value.gameLogRecorder.status+(value.gameLogRecorder.error?'：'+value.gameLogRecorder.error:'') : '');
+    } catch (error) {
+      if (value?.kind !== 'play') throw error;
+      rendered = JSON.stringify({ ...value, state: undefined, feedbackError: error.message, mustObserve: true });
+    }
+    console.log(rendered); emitted = true;
+    try { feedback?.commit(); } catch (error) { if (value?.kind !== 'play') throw error; }
     if (value?.ok === false) process.exitCode = 1;
   };
+  if (command === 'watch') {
+    if (args.length !== 1 || !['on', 'off', 'status'].includes(args[0])) throw Error('watch on|off|status');
+    const recorder = require('../src/game-log-recorder.cjs'), dir = session.sessionDir(name);
+    if (args[0] === 'status') return emit(recorder.status(dir));
+    if (args[0] === 'off') return emit(await recorder.disable(dir));
+    // Starting observation never prepares a game, changes packs, or selects a general.
+    if (!(await session.status(name)).running) {
+      if (clientKind !== 'native') throw Error('请先创建房间或启动 isolated 会话。');
+      await session.start({ session: name, source: o.source, executable: o.executable, port: o.port, attach: !!o.attach });
+    }
+    const value = await recorder.enable(session, name, clientKind);
+    emit({ ...value, ok: value.status === 'recording' }); return;
+  }
+  if (command === 'logs') {
+    if (args.length && !(args.length === 1 && args[0] === 'games')) throw Error('logs [--all | --game ID] 或 logs games');
+    const archived = o.all || o.game != null || o.round != null || args[0] === 'games';
+    if (o.to != null && !archived) throw Error('--to 用于归档战报，请加 --all 或 --game ID。');
+    if (archived) {
+      if (o.raw || o.compact || o['log-mode'] && o['log-mode'] !== 'experimental') throw Error('归档战报使用实验模式；请移除 classic/compact/raw 覆盖。');
+      if (args[0] === 'games' && (o.all || o.game || o.round || o.from || o.to)) throw Error('logs games 不接受战报筛选条件。');
+      const from = integer(o.from, 1, 1, Number.MAX_SAFE_INTEGER), to = integer(o.to, Number.MAX_SAFE_INTEGER, 1, Number.MAX_SAFE_INTEGER);
+      const round = o.round == null ? undefined : integer(o.round, 1, 0, Number.MAX_SAFE_INTEGER);
+      if (from > to) throw Error('--from 不能大于 --to。');
+      const store = require('../src/game-log-store.cjs'), archive = await store.load(session.sessionDir(name));
+      const recording = require('../src/game-log-recorder.cjs').status(session.sessionDir(name));
+      if (recording.enabled && !['recording', 'stopped'].includes(recording.status)) archive.warnings.push('后台记录器 ' + recording.status + (recording.error ? '：' + recording.error : '') + '；以下仅为已保存记录。');
+      return emit(args[0] === 'games' ? store.catalog(archive) : store.select(archive, { game: o.game || 'latest', from, to, round }));
+    }
+  }
+  if (command === 'receipt') {
+    if (args.length > 1) throw Error('receipt 只接受一个可选的调用 ID。');
+    const file = path.join(session.sessionDir(name), 'evidence.jsonl');
+    let latest = null;
+    if (fs.existsSync(file)) for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+      try { const row = JSON.parse(line); if (row.operationId && row.output?.kind === 'play' && (!args[0] || row.operationId === args[0])) latest = { ...row.output, operationId: row.operationId }; } catch { /* Ignore an interrupted last append. */ }
+    }
+    emit(latest ? { ...latest, state: undefined, stateFresh: false, mustObserve: true } : { ok: false, code: 'receipt_unavailable', message: '没有找到此会话的 play 收据。' });
+    return;
+  }
   const notificationDir = () => session.sessionDir(name);
   if (o.notify && (command !== 'start' || o.notify !== 'codex-desktop')) throw new Error('--notify codex-desktop 只用于 start；已有会话使用 notify on。');
   if ((o['notify-thread'] || o['desktop-executable'] || o.thread) && !(command === 'start' && o.notify || command === 'notify' && args[0] === 'on')) throw new Error('通知目标参数只用于 start --notify 或 notify on。');
@@ -317,16 +377,27 @@ async function main(argv, locked = false) {
     return emit(lines.map(r => ({ time: r.time || r.timestamp, command: r.command || r.type, attempt: r.attempt, action: r.output?.action, state: r.output?.state?.state || r.output?.state, result: r.output?.result || r.output?.state?.result, error: r.error, recent: r.output?.recent || r.output?.state?.recent })));
   }
   if (!['start', 'characters', 'character', 'observe', 'act', 'play', 'wait', 'rule', 'restart', 'diagnose', 'inspect', 'logs', 'effects'].includes(command)) throw new Error('未知命令：' + command + '。使用 help。');
-  let startupMonitor;
+  let startupMonitor, startupRecorder;
   if (command === 'start') {
     if (!o.character || !['identity', 'doudizhu', '2v2'].includes(o.mode)) throw new Error('start 需要 --mode identity|doudizhu|2v2 和 --character ID。');
     if ((await session.status(name)).running) throw new Error('会话已经运行；使用 observe 继续，或使用 restart 明确重开。');
-    startupMonitor = (await session.start({ ...o, session: name }))?.errorMonitor;
+    const started = await session.start({ ...o, session: name });
+    startupMonitor = started?.errorMonitor; startupRecorder = started?.gameLogRecorder;
   }
   const { cdp, state } = await session.connect(name);
   const intentFile = path.join(state.evidenceDirectory, 'task.json');
   let intent = fs.existsSync(intentFile) ? JSON.parse(fs.readFileSync(intentFile, 'utf8')) : { attempt: 0 };
-  let output;
+  let output, operationId;
+  const playSummary = value => ({ ...value, operationId, completedSteps: (value.steps || []).filter(s => s.status === 'completed').length,
+    settlement: value.stateFresh === false ? 'unknown' : value.state?.state === 'running' ? 'pending' : 'observed',
+    mustObserve: value.stateFresh === false || (value.steps || []).some(s => s.inFlight?.status === 'unknown') });
+  async function evidence(record) {
+    try { await session.appendEvidence(name, record); }
+    catch (error) {
+      if (command !== 'play' || !output) throw error;
+      output = { ...output, evidenceError: error.message };
+    }
+  }
   try {
     if (['act', 'play', 'restart'].includes(command) && session.sessionDir) notifications.beginOperation?.(notificationDir(), { restart: command === 'restart' });
     if (command === 'start' || command === 'restart') {
@@ -359,8 +430,12 @@ async function main(argv, locked = false) {
       if (Buffer.byteLength(input) > 1048576) throw new Error('play 表达式超过1MB。');
       if (!input.trim()) throw new Error('play 表达式不能为空。');
       const plan = parsePlay(input);
+      operationId = randomUUID();
       output = await executePlay(plan, { observe: () => page.observe(cdp), act: request => page.act(cdp, request), effects: () => page.effects(cdp), sleep: delay },
-        { at: o.at, timeoutMs: playTimeoutMs, intervalMs: playIntervalMs, ...(o.wait ? { deferFinalWait: true } : {}) });
+        { at: o.at, timeoutMs: playTimeoutMs, intervalMs: playIntervalMs, ...(o.wait ? { deferFinalWait: true } : {}),
+          onProgress: async progress => { output = playSummary(progress); await evidence({ command: 'play_progress', operationId, output }); } });
+      output = playSummary(output);
+      await evidence({ command: 'play_progress', operationId, output });
       if (o.wait) output = await waitAfterAction(output, { observe: () => page.observe(cdp, o.detail), sleep: delay }, { seconds: waitSeconds });
     } else if (command === 'inspect') { if (!args[0] || args[1] && args[1]!=='skills') throw new Error('inspect PLAYER skills'); output=await page.inspect(cdp,{id:args[0]}); }
     else if (command === 'logs') {
@@ -386,7 +461,9 @@ async function main(argv, locked = false) {
       output={connection:await session.status(name),diagnostics:await cdp.evaluate('window.__oneshotDiagnostics || []'),document:await cdp.evaluate('({url:location.href,readyState:document.readyState,importmaps:document.querySelectorAll("script[type=importmap]").length})'),state:observed,recovery:'选择未出现可 wait；失效选项先 observe；页面故障可 restart，已记录的参与仍保留。'};
     }
     if(startupMonitor)output.errorMonitor=startupMonitor;
-    await session.appendEvidence(name, { command, attempt: intent.attempt, input: { args, ...o }, output });
+    if(startupRecorder)output.gameLogRecorder=startupRecorder;
+    if (command === 'play') output = playSummary(output);
+    await evidence({ command, ...(operationId ? { operationId } : {}), attempt: intent.attempt, input: { args, ...o }, output });
     if (['start', 'restart', 'act', 'play'].includes(command) && session.sessionDir) {
       const dir = notificationDir(), snapshot = output?.state;
       // Synchronous feedback already delivers this decision to the agent. Do
@@ -409,6 +486,13 @@ async function main(argv, locked = false) {
       }
     }
   } catch (error) {
+    if (command === 'play' && output?.kind === 'play') {
+      output = playSummary({ ...output, ok: false, stateFresh: false, code: error.code || 'feedback_failed', message: error.message });
+      await evidence({ command, operationId, output, error: error.message });
+      if (!emitted) emit(output);
+      process.exitCode = 1;
+      return;
+    }
     await session.appendEvidence(name, { command, attempt: intent.attempt, error: error.message, ...(output ? { output } : {}) });
     throw error;
   } finally { cdp.close(); }

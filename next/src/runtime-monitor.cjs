@@ -39,11 +39,20 @@ async function enable(api,name,client){
   return status(dir);
 }
 function lifecycle(api,client){return {...api,
-  async status(name='default'){return {...await api.status(name),errorMonitor:status(api.sessionDir(name))};},
+  async status(name='default'){return {...await api.status(name),errorMonitor:status(api.sessionDir(name)),gameLogRecorder:require('./game-log-recorder.cjs').status(api.sessionDir(name))};},
   async start(options={}){const s=await api.start(options);if(options.extensionOnly)return s;
-    try{return {...s,errorMonitor:await enable(api,options.session || 'default',client)};}
-    catch(error){return {...s,errorMonitor:{enabled:false,status:'unavailable',error:error.message}};}
+    let errorMonitor,gameLogRecorder;
+    try{errorMonitor=await enable(api,options.session || 'default',client);}
+    catch(error){errorMonitor={enabled:false,status:'unavailable',error:error.message};}
+    try{gameLogRecorder=await require('./game-log-recorder.cjs').enable(api,options.session || 'default',client);}
+    catch(error){gameLogRecorder={enabled:false,status:'unavailable',error:error.message};}
+    return {...s,errorMonitor,gameLogRecorder};
   },
-  async stop(name='default'){const s=await api.stop(name);if(s.cleanupComplete||s.status==='absent')disable(api.sessionDir(name));return s;}
+  async stop(name='default'){
+    let gameLogRecorder;
+    try{gameLogRecorder=await require('./game-log-recorder.cjs').disable(api.sessionDir(name));}
+    catch(error){gameLogRecorder={status:'unavailable',error:error.message};}
+    const s=await api.stop(name);if(s.cleanupComplete||s.status==='absent')disable(api.sessionDir(name));return {...s,gameLogRecorder};
+  }
 };}
 module.exports={enable,disable,status,identity,read,write,controlFile,workerFile,lifecycle};

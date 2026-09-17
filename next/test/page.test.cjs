@@ -489,6 +489,63 @@ test('disabled parent controls are not offered as legal actions', () => {
   assert.equal(f.api.observe().choice.options.some(o => o.kind === 'confirm'), false);
 });
 
+test('confirm discovery survives a skin registry replacement and a container without a layout box', async () => {
+  const f = fixture();
+  const root = new Element('control-root'), control = root.appendChild(new Element('control'));
+  control.getClientRects = () => [];
+  const ok = control.appendChild(Object.assign(new Element('', '确定'), { link: 'ok' }));
+  f.ui.control = root;
+  ok.onClick = () => { f._status.imchoosing = false; f._status.event.result = { bool: true, cards: [f.ownCard] }; };
+  const before = f.api.observe();
+  assert.ok(before.choice.options.some(o => o.kind === 'confirm'));
+  const request = f.api.act({ id: 'confirm', at: before.revision }); f.flush();
+  assert.equal((await request).ok, true); assert.equal(ok.clickCount, 1);
+  assert.equal(f.api.effects().choices[0].accepted, true);
+});
+
+test('visible card buttons expose stable entity identity while blank buttons do not expose link metadata', () => {
+  const f = fixture(), dialog = new Element('dialog');
+  const publicCard = Object.assign(new Element('card', '诸葛连弩'), { name: 'zhuge', suit: 'club', number: 1 });
+  const publicButton = Object.assign(new Element('button card selectable', '诸葛连弩'), { link: publicCard });
+  const hiddenButton = Object.assign(new Element('button card selectable'), { link: f.secretCard });
+  dialog.appendChild(publicButton); dialog.appendChild(hiddenButton); f.ui.dialog = dialog;
+  const first = f.api.observe().choice.options;
+  assert.equal(first.find(o => o.card?.name === 'zhuge').card.number, 1);
+  assert.equal(first.find(o => o.visibility === 'hidden').card, undefined);
+  const id = first.find(o => o.card?.name === 'zhuge').card.id;
+  const replacement = Object.assign(new Element('button card selectable', '诸葛连弩'), { link: publicCard });
+  dialog.children = []; dialog.appendChild(replacement);
+  assert.equal(f.api.observe().choice.options.find(o => o.card?.name === 'zhuge').card.id, id);
+});
+
+test('play interaction token tolerates prompt redraw but rejects changed selection and constraints', async () => {
+  const f = fixture();
+  f.ownCard.onClick = () => f.ownCard.classList.add('selected');
+  let before = f.api.observe();
+  f._status.event.prompt = '新动画提示';
+  assert.notEqual(f.api.observe().revision, before.revision);
+  assert.equal(f.api.observe().interaction, before.interaction);
+  const strict = await f.api.act({ id: before.choice.options[0].id, at: before.revision });
+  assert.equal(strict.code, 'stale_choice'); assert.equal(f.ownCard.clickCount, 0);
+  const pending = f.api.act({ id: before.choice.options[0].id, at: before.revision, interaction: before.interaction }); f.flush();
+  assert.equal((await pending).ok, true); assert.equal(f.ownCard.clickCount, 1);
+  const rejected = await f.api.act({ id: before.choice.options[0].id, at: before.revision, interaction: before.interaction });
+  assert.equal(rejected.code, 'stale_choice');
+  before = f.api.observe(); f._status.event.selectCard = 2;
+  assert.notEqual(f.api.observe().interaction, before.interaction);
+});
+
+test('selection receipts retain only options visible to the choosing player', async () => {
+  const f = fixture(); f._status.event.name = 'chooseToDiscard';
+  f._status.event._result = {}; // Native GameEvent initializes this even before result exists.
+  f.ownCard.onClick = () => { f._status.event.result = { bool: true, cards: [f.ownCard, f.secretCard] }; f._status.imchoosing = false; };
+  const before = f.api.observe(); const ownId = before.choice.options[0].card.id;
+  const pending = f.api.act({ id: ownId, at: before.revision }); f.flush(); await pending;
+  const receipts = f.api.effects().choices;
+  assert.deepEqual(Array.from(receipts[0].cards), [ownId]);
+  assert.equal(JSON.stringify(receipts).includes('secret_other_hand'), false);
+});
+
 test('other player skill listing follows the normal tooltip visibility filter', () => {
   const f = fixture();
   f.other.getSkills = () => ['public_skill', 'secret_internal_state'];
