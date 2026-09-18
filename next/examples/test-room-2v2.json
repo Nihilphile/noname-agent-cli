@@ -1,0 +1,9 @@
+{
+  "mode": "2v2",
+  "seats": [
+    { "session": "test-a", "character": "caocao", "team": "A" },
+    { "session": "test-b", "character": "guanyu", "team": "B" },
+    { "session": "test-c", "character": "zhangfei", "team": "A" },
+    { "session": "test-d", "character": "zhaoyun", "team": "B" }
+  ]
+}

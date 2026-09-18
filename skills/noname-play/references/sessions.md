@@ -50,4 +50,9 @@ node bin/noname.cjs start --client isolated --session NAME --mode identity --cha
 
 ## 房间
 
+指定武将或固定身份/队伍的联机测试使用[固定阵容测试房](test-room.md)。
+
 已加入的房间 session 与普通会话使用相同的 `observe/play/wait`。只有用户明确要求管理房间时才调用 `room create/join/start/close`，并先读工具目录的 `docs/ROOMS.md`。房间创建失败时保留原错误，执行 `room close NAME` 清理，不改用另一客户端偷偷重试。
+
+客机结束参与时用 `room leave NAME --session PLAYER`。房主关闭房间会结束所有人
+的对局，按用户约定由协调者执行 `room close NAME`，不要把本人死亡直接当成整房结束。

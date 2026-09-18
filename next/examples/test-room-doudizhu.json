@@ -1,0 +1,8 @@
+{
+  "mode": "doudizhu",
+  "seats": [
+    { "session": "test-a", "character": "caocao", "identity": "zhu" },
+    { "session": "test-b", "character": "guanyu", "identity": "fan" },
+    { "session": "test-c", "character": "zhangfei", "identity": "fan" }
+  ]
+}

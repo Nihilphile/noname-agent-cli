@@ -11,6 +11,8 @@ description: 使用 noname-agent CLI，以滚动规划接手、游玩和复盘�
 
 接手已有会话时直接观察；只有用户要求启动、重开、选择客户端、加载可选内容或管理房间时，才读[会话与内容配置](references/sessions.md)。
 
+用户要求多个 Agent 使用指定武将对战，或固定联机身份/队伍时，先读[固定阵容测试房](references/test-room.md)。已分配好 session 的参与者直接按下文游玩。
+
 ```powershell
 node bin/noname.cjs observe --detail --session NAME
 ```
@@ -93,4 +95,4 @@ node bin/noname.cjs rule SKILL_OR_CARD_ID --session NAME
 
 按用户约定的局数和终点行动。默认以本人死亡或原生 `over` 先到者结束参与；未观察到最终胜负时明确写“最终胜负未观测”。简述关键决策、结果和仍不确定的信息，不用规则推测补成已经发生的事实。
 
-自己负责的会话在结束后用 `stop --session NAME` 清理；用户要求交回会话或保留窗口时按约定处理。
+普通会话在结束后用 `stop --session NAME` 清理；房间会话按对应 reference 的房主/客机约定交回或清理。用户要求保留窗口时按约定处理。

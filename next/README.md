@@ -2,7 +2,7 @@
 
 让外部 Agent 通过命令行参与本机无名杀对局，也支持一个人类与多个 Agent 在同一台电脑联机。工具提供玩家视角观察、操作串、压缩战报、ZIP 扩展导入和局内错误报告；模型由你自己的 Agent 环境提供。
 
-当前版本：**1.3.0-experimental.8**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.8)。
+当前版本：**1.3.0-experimental.9**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.9)。
 
 ## 安装和第一次开局
 
@@ -51,7 +51,13 @@ node bin/noname.cjs wait --seconds 15 --session demo
 
 新选择出现时重新观察。操作串遇到需要新决策、阶段变化或无法确认提交时会停止；不会自动重放。机器调用可加 --json。可单独安装并手动调用 [noname-play Skill](https://github.com/Nihilphile/noname-agent-cli/tree/main/skills/noname-play)，让 Agent 按玩家视角使用这些命令。
 
+发布 ZIP 也包含 `skills/noname-play`，可直接复制到 Agent 技能目录；固定武将测试的说明按需加载在 `references/test-room.md`。
+
 ## 人类与多个 Agent 同机联机
+
+需要固定武将、斗地主身份或 2v2 队伍做对战测试时，使用独立的
+[`test-room` 模块](docs/TEST-ROOM.md)：`test-room create NAME --lineup FILE`，
+再执行 `test-room start NAME`；开局后仍使用各自 session 的玩家命令。
 
 ```powershell
 node bin/noname.cjs room create table --mode doudizhu --host human
@@ -92,7 +98,7 @@ room 导入供之后的新房间使用；native 导入会修改原游戏扩展�
 
 - [操作串](docs/PLAY.md)、[操作后等待](docs/ACT-WAIT.md)、[场面显示](docs/STATE-AUTO.md)
 - [ZIP 导入](docs/EXTENSIONS.md)、[扩展错误报告](docs/EXTENSION-REPORTS.md)
-- [验证范围与已知限制](docs/VALIDATION.md)、[本版更新](docs/RELEASE-experimental.8.md)
+- [验证范围与已知限制](docs/VALIDATION.md)、[本版更新](docs/RELEASE-experimental.9.md)
 
 在 next 目录运行 npm test。部分引擎探针需要先配置匹配的游戏；没有安装时会跳过，不能把跳过视为游戏兼容性通过。
 

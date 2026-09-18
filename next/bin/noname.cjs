@@ -36,6 +36,8 @@ room create NAME [--mode doudizhu|2v2] [--host human|agent] [--session HOST] [--
 room join NAME --session PLAYER [--visible]  独立 Agent 客户端入房
 room start|status|close NAME  开局、查看成员或结束整个房间
 room leave NAME --session PLAYER  客机离开；房主离开需明确 close
+test-room create NAME --lineup FILE [--visible]  按 JSON 阵容创建所有 Agent 客户端
+test-room start|status|close NAME  固定武将及身份/队伍开局、核验或关闭
 start --mode identity|doudizhu|2v2 --character ID   启动原客户端（可见窗口）并定向选将
 characters [QUERY]     查询当前环境武将（须先 start）
 character ID           单独查看精确武将ID的公开基础资料和原生技能说明
@@ -89,7 +91,7 @@ native 使用原配置；isolated 显式启用旧版隔离环境，--visible 可
 function parse(argv) {
   const options = {}, positional = [];
   const bools = new Set(['json', 'detail', 'visible', 'unselect', 'help', 'stdin', 'attach', 'raw', 'compact', 'state_hide', 'state_show', 'state_auto', 'wait', 'replace', 'reload', 'all']);
-  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'extensions', 'character-packs', 'card-packs', 'observe-seconds', 'game', 'round']);
+  const values = new Set(['mode', 'character', 'source', 'browser', 'session', 'at', 'seconds', 'wait-seconds', 'interval-ms', 'limit', 'to', 'value', 'client', 'port', 'executable', 'from', 'notify', 'notify-thread', 'thread', 'desktop-executable', 'log-mode', 'host', 'turn-seconds', 'target', 'extensions', 'character-packs', 'card-packs', 'observe-seconds', 'game', 'round', 'lineup']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith('--')) positional.push(a);
@@ -236,6 +238,18 @@ async function main(argv, locked = false) {
       value = await ext.reportedImport(args[1],o);
     } else throw Error('extension import ZIP --target room|native [--replace] [--reload] | extension list');
     console.log(o.json ? JSON.stringify(value) : value.extensions ? value.extensions.map(e => `${e.name} | ${e.sha256.slice(0,12)}`).join('\n') || 'no_extension' : `${value.name} 导入成功${value.target === 'room' ? '，供新房间使用' : value.restartRequired ? '，重载游戏后生效' : '，已重载'}${value.backup ? '\n备份：'+value.backup : ''}`);
+    return;
+  }
+  if (command === 'test-room') {
+    const [action, id] = args;
+    if (args.length !== 2 || !['create', 'start', 'status', 'close'].includes(action)) throw Error('test-room create NAME --lineup FILE | test-room start|status|close NAME');
+    const tests = require('../src/test-room.cjs');
+    const allowed = new Set(action === 'create' ? ['lineup', 'source', 'browser', 'visible', 'turn-seconds', 'extensions', 'character-packs', 'card-packs', 'json'] : ['json']);
+    for (const key of Object.keys(o)) if (!allowed.has(key)) throw Error(`test-room ${action} does not accept --${key}.`);
+    if (action === 'create' && !o.lineup) throw Error('test-room create requires --lineup FILE.');
+    const value = action === 'create' ? await tests.create(id, { ...o, timeout: o['turn-seconds'] }) : await tests[action](id);
+    console.log(o.json ? JSON.stringify(value) : tests.format(value));
+    if (value.ok === false) process.exitCode = 1;
     return;
   }
   if (command === 'room') {

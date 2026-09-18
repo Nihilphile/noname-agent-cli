@@ -42,7 +42,7 @@ function own(room, member) {
   return state;
 }
 function summary(room) {
-  return { ok: true, room: room.id, state: room.state, mode: room.mode, address: room.address, turnSeconds: room.timeout, contentProfile: contentProfiles.resolve(room.contentProfile || {}), extensions:(room.extensionBundle || []).map(e => ({name:e.name,sha256:e.sha256})), members: room.members.map(m => ({ session: m.session, role: m.role, controller: m.controller, playerId: m.nativePlayerId || null, state: m.state })), ...(room.error ? { error: room.error } : {}) };
+  return { ok: true, room: room.id, state: room.state, mode: room.mode, address: room.address, turnSeconds: room.timeout, contentProfile: contentProfiles.resolve(room.contentProfile || {}), extensions:(room.extensionBundle || []).map(e => ({name:e.name,sha256:e.sha256})), members: room.members.map(m => ({ session: m.session, role: m.role, controller: m.controller, playerId: m.nativePlayerId || null, state: m.state })), ...(room.testRoom ? { testRoom: room.testRoom } : {}), ...(room.error ? { error: room.error } : {}) };
 }
 async function create(id, options = {}) {
   const config = validate({ id, ...options });
@@ -54,10 +54,11 @@ async function create(id, options = {}) {
       const port = await freePort();
       const member = { id: crypto.randomUUID(), session: name, role: 'host', controller: config.host, state: 'starting' };
       const room = { id, epoch: crypto.randomUUID(), ...config, source: path.resolve(options.source || session.DEFAULT_SOURCE), contentProfile: contentProfiles.resolve(options), address: `ws://127.0.0.1:${port}`, state: 'creating', members: [member], createdAt: new Date().toISOString() };
+      if (options.testRoom) room.testRoom = { lineup: require('./test-room.cjs').validate(options.testRoom.lineup), status: 'configured' };
       room.extensionBundle = extensions.snapshot();
       write(room);
       try {
-        await session.start({ session: name, source: room.source, contentProfile: room.contentProfile, extensionBundle:room.extensionBundle, visible: config.host === 'human' || !!options.visible, roomHost: { wsPort: port }, room: { id, epoch: room.epoch, memberId: member.id, role: 'host', controller: member.controller } });
+        await session.start({ session: name, source: room.source, contentProfile: room.contentProfile, extensionBundle:room.extensionBundle, softwareRendering: !!room.testRoom, visible: config.host === 'human' || !!options.visible, roomHost: { wsPort: port }, room: { id, epoch: room.epoch, memberId: member.id, role: 'host', controller: member.controller } });
         session.update(name, { room: { id, epoch: room.epoch, memberId: member.id, role: 'host', controller: member.controller } });
         await connected(name, async cdp => { const content = extensionOptions(room); await setup.prepare(cdp, { mode: room.mode, nickname: '房主', timeout: room.timeout, ...content }); await setup.host(cdp, { ...room, ...content }); });
         member.state = 'joined'; room.state = 'lobby'; write(room); return summary(room);
@@ -78,7 +79,7 @@ async function join(id, options = {}) {
       const member = { id: crypto.randomUUID(), session: name, role: 'guest', controller: 'agent', state: 'starting' };
       room.members.push(member); write(room);
       try {
-        await session.start({ session: name, source: room.source, contentProfile: room.contentProfile, extensionBundle:room.extensionBundle, visible: !!options.visible, browser: options.browser, room: { id, epoch: room.epoch, memberId: member.id, role: 'guest', controller: member.controller } });
+        await session.start({ session: name, source: room.source, contentProfile: room.contentProfile, extensionBundle:room.extensionBundle, softwareRendering: !!room.testRoom, visible: !!options.visible, browser: options.browser, room: { id, epoch: room.epoch, memberId: member.id, role: 'guest', controller: member.controller } });
         session.update(name, { room: { id, epoch: room.epoch, memberId: member.id, role: 'guest', controller: member.controller } });
         const joined = await connected(name, async cdp => { await setup.prepare(cdp, { mode: room.mode, nickname: name.slice(-12), timeout: room.timeout, ...extensionOptions(room) }); return setup.join(cdp, room.address); });
         member.nativePlayerId = joined.onlineID; member.state = 'joined';
@@ -91,20 +92,38 @@ async function join(id, options = {}) {
 async function start(id) {
   return locked(id, async () => {
     const room = required(id), members = room.members.filter(m => m.state !== 'left');
-    if (room.state !== 'lobby') fail('room_not_waiting', 'Room is not waiting for start.');
-    if (members.length !== (room.mode === '2v2' ? 4 : 3) || members.some(m => m.state !== 'joined')) fail('room_not_ready', 'All seats must have joined successfully.');
-    for (const member of members) { own(room, member); const s = await connected(member.session, setup.status); if (!s.connected || !s.waiting) fail('member_not_ready', `${member.session} is not connected in the lobby.`); }
-    const host = members.find(m => m.role === 'host');
-    await session.withLock(host.session, () => connected(host.session, async cdp => {
-      const s = await setup.status(cdp);
-      if (s.peers?.length !== members.length || members.filter(m => m.role === 'guest').some(m => !s.peers.some(p => p.id === m.nativePlayerId))) fail('room_roster_mismatch', 'Native roster does not match registered members.');
-      await setup.start(cdp);
-      room.state = 'playing'; write(room);
-      const assigned = await setup.poll(cdp, ({ game }) => ({ ready: !!game.me?.playerid, playerId: game.me?.playerid }), null, 'host seat assignment');
-      host.nativePlayerId = assigned.playerId;
-      session.update(host.session, { room: { ...session.read(host.session).room, nativePlayerId: host.nativePlayerId } });
-    }));
-    write(room); return summary(room);
+    let testStarted = false;
+    try {
+      if (room.state !== 'lobby') fail('room_not_waiting', 'Room is not waiting for start.');
+      if (members.length !== (room.mode === '2v2' ? 4 : 3) || members.some(m => m.state !== 'joined')) fail('room_not_ready', 'All seats must have joined successfully.');
+      for (const member of members) { own(room, member); const s = await connected(member.session, setup.status); if (!s.connected || !s.waiting) fail('member_not_ready', `${member.session} is not connected in the lobby.`); }
+      const host = members.find(m => m.role === 'host');
+      await session.withLock(host.session, () => connected(host.session, async cdp => {
+        const s = await setup.status(cdp);
+        if (s.peers?.length !== members.length || members.filter(m => m.role === 'guest').some(m => !s.peers.some(p => p.id === m.nativePlayerId))) fail('room_roster_mismatch', 'Native roster does not match registered members.');
+        if (room.testRoom) {
+          await require('./test-room.cjs').beforeStart(room);
+          testStarted = true;
+          room.testRoom.status = 'selecting'; write(room);
+        }
+        await setup.start(cdp);
+        room.state = 'playing'; write(room);
+        const assigned = await setup.poll(cdp, ({ game }) => ({ ready: !!game.me?.playerid, playerId: game.me?.playerid }), null, 'host seat assignment');
+        host.nativePlayerId = assigned.playerId;
+        session.update(host.session, { room: { ...session.read(host.session).room, nativePlayerId: host.nativePlayerId } });
+      }));
+      if (room.testRoom) {
+        room.testRoom = { ...room.testRoom, ...(await require('./test-room.cjs').afterStart(room)) };
+      }
+      write(room); return summary(room);
+    } catch (error) {
+      if (testStarted) {
+        room.testRoom.status = 'failed'; room.testRoom.error = error.message; write(room);
+        const cleanup = await closeOwned(room);
+        if (!cleanup.ok) error.message += ` Cleanup incomplete: ${cleanup.error}`;
+      }
+      throw error;
+    }
   });
 }
 async function status(id) {
@@ -128,26 +147,26 @@ async function leave(id, name) {
   });
 }
 async function close(id) {
-  return locked(id, async () => {
-    const room = required(id);
-    if (room.state === 'closed') return summary(room);
-    const failures = [];
-    for (const member of [...room.members].reverse()) {
-      if (member.state === 'left') continue;
-      try {
-        await session.withLock(member.session, async () => {
-          const state = session.read(member.session);
-          if ((!state || state.cleanupComplete) && member.state === 'failed') return;
-          own(room, member);
-          notifications.disable(session.sessionDir(member.session), 'room_closed');
-          const stopped = await session.stop(member.session);
-          if (!stopped.ok) fail('cleanup_incomplete', stopped.message);
-        });
-        member.state = 'left'; write(room);
-      } catch (error) { failures.push(`${member.session}: ${error.message}`); }
-    }
-    room.state = failures.length ? 'cleanup_incomplete' : 'closed'; room.error = failures.join('; ') || null; write(room);
-    return { ...summary(room), ok: !failures.length };
-  });
+  return locked(id, () => closeOwned(required(id)));
+}
+async function closeOwned(room) {
+  if (room.state === 'closed') return summary(room);
+  const failures = [];
+  for (const member of [...room.members].reverse()) {
+    if (member.state === 'left') continue;
+    try {
+      await session.withLock(member.session, async () => {
+        const state = session.read(member.session);
+        if ((!state || state.cleanupComplete) && member.state === 'failed') return;
+        own(room, member);
+        notifications.disable(session.sessionDir(member.session), 'room_closed');
+        const stopped = await session.stop(member.session);
+        if (!stopped.ok) fail('cleanup_incomplete', stopped.message);
+      });
+      member.state = 'left'; write(room);
+    } catch (error) { failures.push(`${member.session}: ${error.message}`); }
+  }
+  room.state = failures.length ? 'cleanup_incomplete' : 'closed'; room.error = failures.join('; ') || null; write(room);
+  return { ...summary(room), ok: !failures.length };
 }
 module.exports = { create, join, start, status, leave, close, read, validate };

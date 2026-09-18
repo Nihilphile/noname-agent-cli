@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { createRequire } = require('node:module');
-function fixture({ failHost = false, extensionEntries = [] } = {}) {
+function fixture({ failHost = false, extensionEntries = [], testHooks = null } = {}) {
   const filename = path.resolve(__dirname, '../src/room.cjs'), real = createRequire(filename);
   const files = new Map(), states = new Map(), launches = [], prepared = [], stopped = [], locks = new Set();
   const clone = x => x == null ? x : JSON.parse(JSON.stringify(x));
@@ -36,6 +36,7 @@ function fixture({ failHost = false, extensionEntries = [] } = {}) {
     if (name === './notification.cjs') return { disable() {} };
     if (name === './extensions.cjs') return {snapshot:()=>clone(extensionEntries)};
     if (name === './extension-files.cjs') return {verifyFiles(){}};
+    if (name === './test-room.cjs' && testHooks) return { validate: real('./test-room.cjs').validate, ...testHooks };
     return real(name);
   };
   const module = { exports: {} };
@@ -106,4 +107,42 @@ test('room has no required source extension and accepts a generic explicit conte
   assert.deepEqual(custom.launches[0].contentProfile,{extensions:['Nihilphile'],characterPacks:['nihilphile'],cardPacks:[]});
   assert.deepEqual(custom.prepared[0].extensions,['Nihilphile']);
   assert.deepEqual(custom.prepared[0].characterPacks,['nihilphile']);
+});
+
+test('test room setup runs before native start and verification persists for both command paths', async () => {
+  const order = [];
+  const lineup = require('../examples/test-room-doudizhu.json');
+  const f = fixture({ testHooks: {
+    beforeStart: async r => { assert.equal(r.state, 'lobby'); order.push('setup'); },
+    afterStart: async r => { assert.equal(r.members[0].nativePlayerId, 'host-native-seat'); order.push('verify'); return { status: 'verified', snapshots: [] }; },
+  } });
+  const start = f.setup.start;
+  f.setup.start = async () => { order.push('native'); await start(); };
+  await f.api.create('test-table', { session: 'test-a', host: 'agent', testRoom: { lineup } });
+  await f.api.join('test-table', { session: 'test-b' }); await f.api.join('test-table', { session: 'test-c' });
+  const result = await f.api.start('test-table');
+  assert.deepEqual(order, ['setup', 'native', 'verify']);
+  assert.equal(result.testRoom.status, 'verified');
+  assert.equal(f.api.read('test-table').testRoom.status, 'verified');
+  assert.ok(f.launches.every(s => s.softwareRendering));
+});
+
+test('failed test verification closes only the owned test clients and retains the failure', async () => {
+  const f = fixture({ testHooks: { beforeStart: async () => {}, afterStart: async () => { throw Error('wrong character'); } } });
+  const lineup = require('../examples/test-room-doudizhu.json');
+  await f.api.create('test-table', { session: 'test-a', host: 'agent', testRoom: { lineup } });
+  await f.api.join('test-table', { session: 'test-b' }); await f.api.join('test-table', { session: 'test-c' });
+  await assert.rejects(f.api.start('test-table'), /wrong character/);
+  const r = f.api.read('test-table');
+  assert.equal(r.state, 'closed'); assert.equal(r.testRoom.status, 'failed'); assert.equal(r.testRoom.error, 'wrong character');
+  assert.deepEqual(f.stopped, ['test-c', 'test-b', 'test-a']);
+});
+
+test('invalid test character fails before starting the native game', async () => {
+  const f = fixture({ testHooks: { beforeStart: async () => { throw Error('disabled character'); } } });
+  const lineup = require('../examples/test-room-doudizhu.json');
+  await f.api.create('test-table', { session: 'test-a', host: 'agent', testRoom: { lineup } });
+  await f.api.join('test-table', { session: 'test-b' }); await f.api.join('test-table', { session: 'test-c' });
+  await assert.rejects(f.api.start('test-table'), /disabled character/);
+  assert.equal(f.api.read('test-table').state, 'lobby'); assert.equal(f.stopped.length, 0);
 });

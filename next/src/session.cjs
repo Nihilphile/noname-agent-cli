@@ -231,7 +231,7 @@ async function stop(session = 'default') {
     return { session, ok: complete, status: state.status, running: complete ? false : null, cleanupComplete: complete, evidenceDirectory: state.evidenceDirectory, ...(!complete ? { code: 'cleanup_incomplete', message: state.cleanupWarning, cleanupWarning: state.cleanupWarning, resourceState: state.resourceState } : {}) };
   } finally { unlock(); }
 }
-async function start({ session = 'default', source, browser, visible = false, roomHost, room, contentProfile = {}, extensionBundle = [], extensionOnly = false, importRoot, importFiles } = {}) {
+async function start({ session = 'default', source, browser, visible = false, softwareRendering = false, roomHost, room, contentProfile = {}, extensionBundle = [], extensionOnly = false, importRoot, importFiles } = {}) {
   source = installation.source(source);
   const unlock = lock(session); let state;
   const children = {};
@@ -261,6 +261,7 @@ async function start({ session = 'default', source, browser, visible = false, ro
     writeState(state);
     const browserLog = fs.openSync(path.join(dir, 'browser.log'), 'a');
     const args = [`--user-data-dir=${profile}`, '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1', '--no-first-run', '--no-default-browser-check', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--disable-features=msEdgeSidebarV2', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--autoplay-policy=no-user-gesture-required', '--window-size=1440,1000', ...(visible ? ['--app=about:blank'] : ['--headless=new', 'about:blank'])];
+    if (softwareRendering) args.unshift('--disable-gpu');
     const env = roomHost ? { ...process.env, NONAME_ROOM_HOST: JSON.stringify({ source: prerequisites.source, profile, visible, wsPort: roomHost.wsPort, extensionBundle, importRoot }) } : process.env;
     const client = spawn(prerequisites.browser, args, { detached: true, windowsHide: !visible, env, stdio: ['ignore', browserLog, browserLog] });
     children.browser = client;
