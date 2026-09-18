@@ -18,21 +18,20 @@ const snapshot = (phaseId = 'p1', epoch = 'game', extra = {}) => ({
   log: { entries: [{ seq: 1, text: '日志' }] }, ...extra,
 });
 
-test('only successfully printed text consumes the first own-phase decision', t => {
+test('only successfully printed fresh feedback consumes the first own-phase decision', t => {
   const dir = fixture(t), state = Object.freeze(snapshot());
   assert.equal(feedback.prepare(dir, state, { state: 'auto' }).options.state, 'show');
-  feedback.prepare(dir, state, { state: 'auto' }, { json: true }).commit();
   feedback.prepare(dir, { ok: false, state }, { state: 'auto' }).commit();
   const staleBefore = feedback.prepare(dir, { state, stateFresh: false }, { state: 'auto' });
-  assert.equal(staleBefore.options.state, 'show'); staleBefore.commit();
+  assert.equal(staleBefore.options.state, 'hide'); staleBefore.commit();
   feedback.prepare(dir, state, { state: 'hide' }).commit();
   assert.equal(fs.existsSync(path.join(dir, 'display-feedback.json')), false);
   const first = feedback.prepare(dir, state, { state: 'auto' });
   assert.equal(first.options.state, 'show'); first.commit();
   assert.equal(feedback.prepare(dir, state, { state: 'auto' }).options.state, 'hide');
-  assert.equal(feedback.prepare(dir, { state, stateFresh: false }, { state: 'auto' }).options.state, 'show');
+  assert.equal(feedback.prepare(dir, { state, stateFresh: false }, { state: 'auto' }).options.state, 'hide');
   const staleRunning = { state: { ...state, state: 'running', choice: null }, stateFresh: false };
-  assert.equal(feedback.prepare(dir, staleRunning, { state: 'auto' }).options.state, 'show');
+  assert.equal(feedback.prepare(dir, staleRunning, { state: 'auto' }).options.state, 'hide');
   assert.equal(state.me.name, 'any-general'); assert.equal(state.log.entries.length, 1);
 });
 
@@ -55,12 +54,12 @@ test('own turn shows each play phase once and hides the rest of that turn', t =>
   assert.equal(feedback.prepare(dir, ending, { state: 'auto' }).options.state, 'hide');
 });
 
-test('responses outside our turn always show, including during another phaseUse', t => {
+test('responses outside our turn hide, including during another phaseUse', t => {
   const dir = fixture(t);
   const response = snapshot('other-turn', 'game', { actor: 'other' });
   for (let n = 0; n < 3; n++) {
     const prepared = feedback.prepare(dir, response, { state: 'auto' });
-    assert.equal(prepared.options.state, 'show'); prepared.commit();
+    assert.equal(prepared.options.state, 'hide'); prepared.commit();
   }
   assert.equal(fs.existsSync(path.join(dir, 'display-feedback.json')), false);
 });
@@ -75,7 +74,7 @@ test('new game epoch resets receipts and separate sessions keep separate first f
   assert.equal(persisted.epoch, 'new-game'); assert.deepEqual(persisted.shownPhases, ['new-game:phaseUse:p1']);
 });
 
-test('unknown context and setup/dead/over snapshots conservatively show', t => {
+test('unknown context and setup/dead/over hide automatically but explicit show remains available', t => {
   const dir = fixture(t);
   for (const state of [
     { ...snapshot(), phaseId: null }, { ...snapshot(), phaseId: 'other:phaseUse:p1' },
@@ -83,7 +82,8 @@ test('unknown context and setup/dead/over snapshots conservatively show', t => {
     { ...snapshot(), me: { name: 'missing-id' } }, { ...snapshot(), players: undefined },
     ...['setup', 'dead', 'over'].map(status => snapshot('p1', 'game', { state: status, choice: null })),
   ]) {
-    for (let n = 0; n < 2; n++) { const p = feedback.prepare(dir, state, { state: 'auto' }); assert.equal(p.options.state, 'show'); p.commit(); }
+    for (let n = 0; n < 2; n++) { const p = feedback.prepare(dir, state, { state: 'auto' }); assert.equal(p.options.state, 'hide'); p.commit(); }
+    assert.equal(feedback.prepare(dir, state, { state: 'show' }).options.state, 'show');
   }
   assert.equal(fs.existsSync(path.join(dir, 'display-feedback.json')), false);
 });

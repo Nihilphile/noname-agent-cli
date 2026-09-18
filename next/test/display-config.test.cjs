@@ -44,6 +44,15 @@ test('three log modes and legacy raw alias resolve without changing config', () 
   assert.equal(persisted.logs, 'experimental');
 });
 
+test('observe shows by default while saved settings and explicit flags remain authoritative', () => {
+  assert.equal(config.resolve(config.DEFAULTS, {}, { command: 'observe' }).state, 'show');
+  assert.equal(config.resolve(config.DEFAULTS, {}, { command: 'act' }).state, 'auto');
+  assert.equal(config.resolve({ state: 'hide' }, {}, { command: 'observe' }).state, 'hide');
+  for (const state of ['auto', 'hide', 'show']) {
+    assert.equal(config.resolve(config.DEFAULTS, { [`state_${state}`]: true }, { command: 'observe' }).state, state);
+  }
+});
+
 test('experimental JSON substitutes only logs and respects hidden state without mutating evidence', () => {
   const original = Object.freeze({ entries: [{ seq: 4, text: '原文' }] });
   const experimental = Object.freeze({ coverage: 'experimental_partial', entries: [{ seq: 9, kind: 'operation' }] });

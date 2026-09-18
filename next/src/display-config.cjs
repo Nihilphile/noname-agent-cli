@@ -32,14 +32,14 @@ function save(config, file = CONFIG_PATH) {
   } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   return value;
 }
-function resolve(config, options = {}) {
+function resolve(config, options = {}, { command } = {}) {
   if (options.raw && options.compact) throw new Error('--raw 与 --compact 不能同时使用。');
   if (options['log-mode'] !== undefined && (options.raw || options.compact)) throw new Error('--log-mode 与 --raw/--compact 不能同时使用。');
   if (options['log-mode'] !== undefined && !['classic', 'compact', 'experimental'].includes(options['log-mode'])) throw new Error('--log-mode 必须是 classic、compact 或 experimental。');
   if ([options.state_hide, options.state_show, options.state_auto].filter(Boolean).length > 1) throw new Error('--state_auto、--state_hide 与 --state_show 不能同时使用。');
   const value = validate(config);
   const logs = options['log-mode'] ?? (options.raw ? 'classic' : options.compact ? 'compact' : value.logs);
-  return { logs, raw: logs === 'classic', state: options.state_hide ? 'hide' : options.state_show ? 'show' : options.state_auto ? 'auto' : options.detail && value.state === 'auto' ? 'show' : value.state };
+  return { logs, raw: logs === 'classic', state: options.state_hide ? 'hide' : options.state_show ? 'show' : options.state_auto ? 'auto' : (command === 'observe' || options.detail) && value.state === 'auto' ? 'show' : value.state };
 }
 
 // Presentation only: evidence, notification snapshots and action validation

@@ -2,7 +2,7 @@
 
 让外部 Agent 通过命令行参与本机无名杀对局，也支持一个人类与多个 Agent 在同一台电脑联机。工具提供玩家视角观察、操作串、压缩战报、ZIP 扩展导入和局内错误报告；模型由你自己的 Agent 环境提供。
 
-当前版本：**1.3.0-experimental.9**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.9)。
+当前版本：**1.3.0-experimental.10**（实验版）。[下载 Windows 使用包](https://github.com/Nihilphile/noname-agent-cli/releases/tag/v1.3.0-experimental.10)。
 
 ## 安装和第一次开局
 
@@ -53,6 +53,8 @@ node bin/noname.cjs wait --seconds 15 --session demo
 
 发布 ZIP 也包含 `skills/noname-play`，可直接复制到 Agent 技能目录；固定武将测试的说明按需加载在 `references/test-room.md`。
 
+默认仅在自己每个出牌阶段首次决策反馈中显示全场；后续反馈和回合外响应保留选择与战报。需要完整状态时主动 `observe`，可重复查看。文本和 JSON 共用首次展示记录；显式 `--state_show` / `--state_hide` 仍可覆盖。
+
 ## 人类与多个 Agent 同机联机
 
 需要固定武将、斗地主身份或 2v2 队伍做对战测试时，使用独立的
@@ -98,7 +100,7 @@ room 导入供之后的新房间使用；native 导入会修改原游戏扩展�
 
 - [操作串](docs/PLAY.md)、[操作后等待](docs/ACT-WAIT.md)、[场面显示](docs/STATE-AUTO.md)
 - [ZIP 导入](docs/EXTENSIONS.md)、[扩展错误报告](docs/EXTENSION-REPORTS.md)
-- [验证范围与已知限制](docs/VALIDATION.md)、[本版更新](docs/RELEASE-experimental.9.md)
+- [验证范围与已知限制](docs/VALIDATION.md)、[本版更新](docs/RELEASE-experimental.10.md)
 
 在 next 目录运行 npm test。部分引擎探针需要先配置匹配的游戏；没有安装时会跳过，不能把跳过视为游戏兼容性通过。
 

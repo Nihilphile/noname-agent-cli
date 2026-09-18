@@ -13,21 +13,19 @@ function read(file, epoch) {
   } catch { return []; }
 }
 
-function prepare(dir, value, display, { json = false } = {}) {
-  const options = { ...display, state: display.state === 'auto' ? 'show' : display.state };
+function prepare(dir, value, display) {
+  const options = { ...display, state: display.state === 'auto' ? 'hide' : display.state };
   const snapshot = value?.revision ? value : value?.state;
   const epoch = typeof snapshot?.revision === 'string' ? snapshot.revision.split(':')[0] : null;
   const phaseId = snapshot?.phaseId;
   const result = { options, commit() {} };
-  if (!dir || options.state === 'hide' || !snapshot || ['setup', 'dead', 'over'].includes(snapshot.state)) return result;
-  if (value?.stateFresh === false) return result;
+  if (!dir || display.state === 'hide' || !snapshot || ['setup', 'dead', 'over'].includes(snapshot.state)) return result;
+  if (value?.stateFresh === false || value?.ok === false) return result;
 
-  // Auto cadence is only suppressible when the snapshot identifies whose turn
-  // and phase this is. Incomplete context fails open so useful state is never
-  // hidden on an inference.
+  // Only a confirmed own play-phase decision can automatically show the board.
+  // Explicit observe/show remains available even with incomplete phase context.
   if (!snapshot.me?.id || !Array.isArray(snapshot.players) || !snapshot.actor || !snapshot.phase) return result;
-  if (display.state === 'auto' && snapshot.actor !== snapshot.me.id) return result;
-  if (display.state === 'auto' && snapshot.phase !== 'phaseUse') { options.state = 'hide'; return result; }
+  if (snapshot.actor !== snapshot.me.id) return result;
   if (snapshot.phase !== 'phaseUse') return result;
   if (!epoch || typeof phaseId !== 'string' || !phaseId.startsWith(`${epoch}:phaseUse:`)) return result;
 
@@ -40,7 +38,7 @@ function prepare(dir, value, display, { json = false } = {}) {
 
   const file = path.join(dir, 'display-feedback.json');
   if (display.state === 'auto' && read(file, epoch).includes(phaseId)) { options.state = 'hide'; return result; }
-  if (json || value?.ok === false) return result;
+  options.state = 'show';
   result.commit = () => {
     // Re-read after output so another feedback's already-recorded phase is not
     // erased. If two readers race, a repeated board is safer than a lost first.

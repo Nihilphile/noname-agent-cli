@@ -74,7 +74,7 @@ status                检查会话连接
 diagnose              客户端连接及可见弹窗
 config                查看本工具目录的显示配置
 config set logs classic|compact|experimental   经典、压缩、事件流实验模式
-config set state auto|show|hide  auto默认：每个出牌阶段首次反馈显示全场，之后隐藏
+config set state auto|show|hide  auto默认：自己每个出牌阶段首次反馈显示全场，其他反馈隐藏；observe主动查看
 config reset          恢复显示默认值，不改游戏配置
 stop                  关闭自己创建的客户端、清理临时配置，保留证据
 
@@ -280,7 +280,7 @@ async function main(argv, locked = false) {
     console.log(JSON.stringify({ ...settings, file: displayConfig.CONFIG_PATH }, null, 2));
     return;
   }
-  const display = displayConfig.resolve(displayConfig.read(), o);
+  const display = displayConfig.resolve(displayConfig.read(), o, { command });
   const name = o.session || 'default';
   const roomState = isolatedSession.read?.(name);
   const isRoom = !!roomState?.room;
@@ -302,7 +302,7 @@ async function main(argv, locked = false) {
   const emit = value => {
     let feedback, rendered;
     try {
-      feedback = displayFeedback.prepare(session.sessionDir?.(name), value, display, { json: !!o.json });
+      feedback = displayFeedback.prepare(session.sessionDir?.(name), value, display);
       rendered = render(value, o.json, feedback.options) + (!o.json && value?.notification ? '\n'+notificationText(value.notification) : '') + (!o.json && value?.errorMonitor ? '\n错误监听 '+value.errorMonitor.status+(value.errorMonitor.error?'：'+value.errorMonitor.error:'') : '') + (!o.json && value?.gameLogRecorder ? '\n观战记录 '+value.gameLogRecorder.status+(value.gameLogRecorder.error?'：'+value.gameLogRecorder.error:'') : '');
     } catch (error) {
       if (value?.kind !== 'play') throw error;
